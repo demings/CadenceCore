@@ -16,7 +16,50 @@ public enum WatchStartPhase: String, Sendable {
 }
 
 public enum RideAction: String, Codable, Sendable {
-    case ready, heartbeat, pause, resume, finish, heartRate, snapshot, saved, failure
+    case ready, heartbeat, pause, resume, finish, heartRate, snapshot, saved, failure, intensity
+}
+
+public struct RecordingMetrics: Codable, Equatable, Sendable {
+    public let averageHeartRate: Double?
+    public let maximumHeartRate: Double?
+    public let activeKilocalories: Double?
+    public let restingKilocalories: Double?
+
+    public init(averageHeartRate: Double?, maximumHeartRate: Double?,
+                activeKilocalories: Double?, restingKilocalories: Double?) {
+        self.averageHeartRate = averageHeartRate
+        self.maximumHeartRate = maximumHeartRate
+        self.activeKilocalories = activeKilocalories
+        self.restingKilocalories = restingKilocalories
+    }
+
+    public var totalKilocalories: Double? {
+        guard let activeKilocalories, let restingKilocalories else { return nil }
+        return activeKilocalories + restingKilocalories
+    }
+
+    public var isValid: Bool {
+        [averageHeartRate, maximumHeartRate].allSatisfy { $0.map { $0.isFinite && (1...300).contains($0) } ?? true } &&
+        [activeKilocalories, restingKilocalories].allSatisfy { $0.map { $0.isFinite && (0...100000).contains($0) } ?? true } &&
+        (averageHeartRate.flatMap { average in maximumHeartRate.map { average <= $0 } } ?? true)
+    }
+}
+
+public enum RecordingCoverage {
+    public static func seconds(_ intervals: [DateInterval], within bounds: DateInterval) -> Double {
+        let clipped = intervals.compactMap { interval -> DateInterval? in
+            let start = max(interval.start, bounds.start)
+            let end = min(interval.end, bounds.end)
+            return end > start ? DateInterval(start: start, end: end) : nil
+        }.sorted { $0.start < $1.start }
+        var total = 0.0
+        var end = bounds.start
+        for interval in clipped {
+            total += max(0, interval.end.timeIntervalSince(max(end, interval.start)))
+            end = max(end, interval.end)
+        }
+        return total
+    }
 }
 
 public struct RideDescriptor: Codable, Equatable, Sendable {
@@ -25,19 +68,22 @@ public struct RideDescriptor: Codable, Equatable, Sendable {
     public let duration: Double
     public let ftp: Double
     public let simulation: SimulationConfiguration?
+    public let cadenceConfiguration: CadenceConfiguration?
 
-    public init(id: UUID, name: String, duration: Double, ftp: Double, simulation: SimulationConfiguration? = nil) {
+    public init(id: UUID, name: String, duration: Double, ftp: Double, simulation: SimulationConfiguration? = nil,
+                cadenceConfiguration: CadenceConfiguration? = nil) {
         self.id = id
         self.name = name
         self.duration = duration
         self.ftp = ftp
         self.simulation = simulation
+        self.cadenceConfiguration = cadenceConfiguration
     }
 
     public var isValid: Bool {
         !name.isEmpty && name.utf8.count <= 4096 && duration.isFinite &&
         duration > 0 && duration <= 21600 && ftp.isFinite && (1...2000).contains(ftp) &&
-        (simulation.map(\.isValid) ?? true)
+        (simulation.map(\.isValid) ?? true) && (cadenceConfiguration.map(\.isValid) ?? true)
     }
 }
 
@@ -53,10 +99,16 @@ public struct RideSnapshot: Codable, Sendable {
     public let telemetryDate: Date?
     public let status: String
     public let simulation: SimulatedMetrics?
+    public let intensity: Double?
+    public let guidance: CadenceGuidanceEvaluator.Result?
+    public let cue: String?
+    public let acknowledgedCommandID: UUID?
 
     public init(sequence: Int, state: String, elapsed: Double, interval: Int?, remaining: Double?,
                 target: Int?, power: Int?, cadence: Double?, telemetryDate: Date?, status: String,
-                simulation: SimulatedMetrics? = nil) {
+                simulation: SimulatedMetrics? = nil, intensity: Double? = nil,
+                guidance: CadenceGuidanceEvaluator.Result? = nil, cue: String? = nil,
+                acknowledgedCommandID: UUID? = nil) {
         self.sequence = sequence
         self.state = state
         self.elapsed = elapsed
@@ -68,6 +120,10 @@ public struct RideSnapshot: Codable, Sendable {
         self.telemetryDate = telemetryDate
         self.status = status
         self.simulation = simulation
+        self.intensity = intensity
+        self.guidance = guidance
+        self.cue = cue
+        self.acknowledgedCommandID = acknowledgedCommandID
     }
 
     public var isValid: Bool {
@@ -79,7 +135,9 @@ public struct RideSnapshot: Codable, Sendable {
         (target.map { (0...32767).contains($0) } ?? true) &&
         (power.map { (-32768...32767).contains($0) } ?? true) &&
         (cadence.map { $0.isFinite && (0...1000).contains($0) } ?? true) &&
-        (simulation.map(\.isValid) ?? true)
+        (simulation.map(\.isValid) ?? true) &&
+        (intensity.map { $0.isFinite && (0.5...1.5).contains($0) } ?? true) &&
+        (guidance.map(\.isValid) ?? true) && (cue.map { $0.utf8.count <= 8192 } ?? true)
     }
 }
 
@@ -92,9 +150,14 @@ public struct RideMessage: Codable, Sendable {
     public let bpm: Double?
     public let snapshot: RideSnapshot?
     public let detail: String?
+    public let recording: RecordingMetrics?
+    public let requestedIntensity: Double?
+    public let savedWorkoutID: UUID?
 
     public init(rideID: UUID?, action: RideAction, date: Date = Date(), commandID: UUID = UUID(),
-                bpm: Double? = nil, snapshot: RideSnapshot? = nil, detail: String? = nil) {
+                bpm: Double? = nil, snapshot: RideSnapshot? = nil, detail: String? = nil,
+                recording: RecordingMetrics? = nil, requestedIntensity: Double? = nil,
+                savedWorkoutID: UUID? = nil) {
         version = 1
         self.rideID = rideID
         self.commandID = commandID
@@ -103,6 +166,9 @@ public struct RideMessage: Codable, Sendable {
         self.bpm = bpm
         self.snapshot = snapshot
         self.detail = detail
+        self.recording = recording
+        self.requestedIntensity = requestedIntensity
+        self.savedWorkoutID = savedWorkoutID
     }
 
     public static func decode(_ data: Data, now: Date = Date(), allowDelayedReceipt: Bool = false) throws -> RideMessage {
@@ -113,6 +179,10 @@ public struct RideMessage: Codable, Sendable {
         guard message.version == 1, age <= 5, (age >= -10 || receipt),
               message.action == .heartRate || message.rideID != nil,
               message.snapshot.map(\.isValid) ?? true,
+              message.recording.map(\.isValid) ?? true,
+              message.requestedIntensity.map({ $0.isFinite && (0.5...1.5).contains($0) }) ?? true,
+              message.action != .intensity || message.requestedIntensity != nil,
+              message.savedWorkoutID == nil || message.action == .saved,
               message.bpm.map({ $0.isFinite && (1...300).contains($0) }) ?? true,
               message.action != .snapshot || message.snapshot != nil,
               message.action != .heartRate || message.bpm != nil else {
@@ -151,11 +221,11 @@ public struct TrainerSampleWindow: Sendable {
 
     public mutating func take(_ snapshot: RideSnapshot, now: Date, collectionStart: Date) -> DateInterval? {
         guard snapshot.state == "running", let date = snapshot.telemetryDate,
-              date >= collectionStart, (-3...1).contains(date.timeIntervalSince(now)),
-              lastDate.map({ date > $0 }) ?? true else {
-            if snapshot.state != "running" { lastDate = nil }
+              date >= collectionStart, (-3...1).contains(date.timeIntervalSince(now)) else {
+            lastDate = nil
             return nil
         }
+        guard lastDate.map({ date > $0 }) ?? true else { return nil }
         defer { lastDate = date }
         guard let lastDate, date.timeIntervalSince(lastDate) <= 3 else { return nil }
         return DateInterval(start: lastDate, end: date)

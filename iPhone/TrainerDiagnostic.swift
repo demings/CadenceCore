@@ -4,7 +4,9 @@ import Observation
 
 @MainActor @Observable
 // Both central and peripheral delegates are delivered on the explicitly selected main queue.
-final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegate, @preconcurrency CBPeripheralDelegate {
+final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegate,
+    @preconcurrency CBPeripheralDelegate
+{
     struct Device: Identifiable {
         let id: UUID
         let name: String
@@ -35,6 +37,14 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private(set) var playbackStatus = "No workout selected."
     var onWorkoutUpdate: (() -> Void)?
     let configuration: RideConfiguration
+    let archiveStore: RideArchiveStore
+    private var currentArchive: RideArchive?
+    private var archiveLastWrite: Double?
+    private(set) var archiveError: String?
+    private var receivedHeartRate: (value: Double, date: Date)?
+    private var archivedHeartRateDate: Date?
+    private var recordingMetrics: RecordingMetrics?
+    private(set) var recoveredWatchRide = false
     var simulationSettings: SimulationConfiguration? { configuration.simulation }
     private(set) var simulation: RideSimulation?
     var simulationError: String? { configuration.simulationError ?? simulationRuntimeError }
@@ -60,11 +70,18 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private(set) var scanning = false
     private var scanTimeout: Task<Void, Never>?
     private var preparationCancelled = false
+    private var cadenceEvaluator: CadenceGuidanceEvaluator?
+    private(set) var cadenceGuidance: CadenceGuidanceEvaluator.Result?
+    private var cadenceSampleUptime: Double?
+    private(set) var activeCue: String?
 
     var isConnecting: Bool { peripheral != nil && !connected }
-    var selectedTrainerName: String? { peripheral?.name ?? UserDefaults.standard.string(forKey: "trainerName") }
+    var selectedTrainerName: String? {
+        peripheral?.name ?? UserDefaults.standard.string(forKey: "trainerName")
+    }
     var readinessIssue: TrainerReadiness.Issue? {
-        TrainerReadiness.issue(connected: connected,
+        TrainerReadiness.issue(
+            connected: connected,
             capabilitiesReady: controlSubscribed && powerSupported && powerRange != nil,
             hasControl: hasControl, busy: pending || stopFlow.isInProgress, sampleDate: telemetryDate)
     }
@@ -100,13 +117,13 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 preparationError = "Trainer did not grant control. Close Zwift/Wahoo and retry."
                 return false
             }
-            do { try await Task.sleep(for: .milliseconds(100)) }
-            catch {
+            do { try await Task.sleep(for: .milliseconds(100)) } catch {
                 preparationError = "Ride preparation cancelled."
                 return false
             }
         }
-        preparationError = "Trainer is not ready: \(readinessIssue?.rawValue ?? status). Choose a trainer below, close other cycling apps, and pedal briefly for fresh measurements."
+        preparationError =
+            "Trainer is not ready: \(readinessIssue?.rawValue ?? status). Choose a trainer below, close other cycling apps, and pedal briefly for fresh measurements."
         record(preparationError ?? "Trainer preparation timed out.")
         return false
     }
@@ -125,20 +142,56 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         record("Watch session: \(message)")
     }
 
-    func startWorkout(_ workout: Workout, ftp: Double, simulation configuration: SimulationConfiguration? = nil) {
+    func startWorkout(
+        _ workout: Workout, ftp: Double, simulation configuration: SimulationConfiguration? = nil,
+        cadence policy: CadenceConfiguration? = nil, id: UUID = UUID(),
+        recordingMode: RideArchive.RecordingMode = .iPhone
+    ) {
+        if let archiveError {
+            playbackStatus = "Start blocked. Retry the previous local ride save first: \(archiveError)"
+            record(playbackStatus)
+            return
+        }
         defer { onWorkoutUpdate?() }
         guard !workoutOwnsTrainer, !sequenceActive, readyToRide, let range = powerRange else {
-            playbackStatus = "Prepare the trainer on the workout setup screen, with fresh telemetry and no active test."
+            playbackStatus =
+                "Prepare the trainer on the workout setup screen, with fresh telemetry and no active test."
             record(playbackStatus)
             return
         }
         do {
             let engine = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
             let model = try configuration.map { try RideSimulation(configuration: $0) }
+            cadenceEvaluator = try CadenceGuidanceEvaluator(
+                configuration: policy ?? self.configuration.cadence.snapshot())
+            cadenceGuidance = nil
+            activeCue = nil
+            var archive = try RideArchive(
+                id: id, workout: workout, ftp: ftp, simulation: configuration,
+                trainer: RideTrainerIdentity(
+                    id: peripheral?.identifier, name: selectedTrainerName ?? "Selected trainer"),
+                startedAt: Date(), recordingMode: recordingMode,
+                cadenceConfiguration: policy ?? self.configuration.cadence.snapshot(), initialIntensity: 1)
+            try archive.append(
+                event: RideArchiveEvent(state: .paused, date: archive.startedAt, activeElapsed: 0))
+            if recordingMode == .iPhone {
+                try archive.setHealthReceipt(
+                    RideHealthReceipt(
+                        status: .unavailable,
+                        detail: "iPhone-only ride; no Health workout was created."))
+            }
+            try archiveStore.save(archive)
+            currentArchive = archive
+            archiveError = nil
+            recoveredWatchRide = false
+            archiveLastWrite = ProcessInfo.processInfo.systemUptime
+            receivedHeartRate = nil
+            archivedHeartRateDate = nil
+            recordingMetrics = nil
             playback = engine
             simulation = model
             simulationRuntimeError = nil
-            playbackID = UUID()
+            playbackID = id
             lastWorkoutLogTime = nil
             playbackStatus = "Setting initial target…"
             record("Workout \(workout.name) starting with FTP snapshot \(ftp) W.")
@@ -152,6 +205,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     func pauseWorkout() {
         defer { onWorkoutUpdate?() }
         simulation?.suspend()
+        clearCadenceGuidance()
         if let command = playback?.pause(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
     }
 
@@ -163,20 +217,44 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             return
         }
         guard let snapshot = playback, let range = powerRange,
-              range.minimum == snapshot.range.minimum,
-              range.maximum == snapshot.range.maximum,
-              range.increment == snapshot.range.increment else {
-            playbackStatus = "Resume blocked: trainer power range changed. Finish this workout before starting a new one."
+            range.minimum == snapshot.range.minimum,
+            range.maximum == snapshot.range.maximum,
+            range.increment == snapshot.range.increment
+        else {
+            playbackStatus =
+                "Resume blocked: trainer power range changed. Finish this workout before starting a new one."
             record(playbackStatus)
             return
         }
-        if let command = playback?.begin() { simulation?.suspend(); perform(command) }
+        if let command = playback?.begin() {
+            simulation?.suspend()
+            perform(command)
+        }
     }
 
     func finishWorkout() {
         defer { onWorkoutUpdate?() }
         simulation?.suspend()
-        if let command = playback?.finish(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
+        cadenceGuidance = nil
+        activeCue = nil
+        if let command = playback?.finish(now: ProcessInfo.processInfo.systemUptime) {
+            perform(command)
+        }
+    }
+
+    func adjustIntensity(_ value: Double) {
+        defer { onWorkoutUpdate?() }
+        do {
+            if let command = try playback?.adjustIntensity(
+                value, commandPending: pending || stopFlow.isInProgress)
+            {
+                perform(command)
+            }
+            playbackStatus = "Intensity \(Int((value * 100).rounded()))%. FTP remains unchanged."
+        } catch {
+            playbackStatus = "Intensity unchanged: \(error.localizedDescription)"
+            record(playbackStatus)
+        }
     }
 
     func interruptCoordinatedWorkout(_ reason: String) {
@@ -196,14 +274,24 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             playbackStatus = "Starting trainer…"
             send(Data([7]))
         case .reducedLoadStop:
-            playbackStatus = [playback?.error, "Requesting reduced load…"].compactMap { $0 }.joined(separator: " ")
+            playbackStatus = [playback?.error, "Requesting reduced load…"].compactMap { $0 }.joined(
+                separator: " ")
             stopTrainer()
         }
+    }
+
+    private func clearCadenceGuidance() {
+        _ = cadenceEvaluator?.evaluate(
+            now: ProcessInfo.processInfo.systemUptime, active: false,
+            intervalIndex: 0, targetWatts: 0, ftp: 1, cadence: nil, sampleTimestamp: nil)
+        cadenceGuidance = nil
+        activeCue = nil
     }
 
     private func interruptWorkout(_ reason: String) {
         guard workoutOwnsTrainer else { return }
         playback?.interrupt(reason)
+        clearCadenceGuidance()
         simulation?.suspend()
         workoutWatchdog?.cancel()
         playbackStatus = reason
@@ -216,20 +304,38 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         let now = ProcessInfo.processInfo.systemUptime
         let command = playback?.service(now: now, commandPending: pending)
         if telemetrySample, let playback, [.running, .finishing].contains(playback.state),
-           let date = telemetryDate {
-            do { try simulation?.sample(watts: power, uptime: now, activeTime: playback.elapsed, date: date) }
-            catch {
+            let date = telemetryDate
+        {
+            do {
+                try simulation?.sample(watts: power, uptime: now, activeTime: playback.elapsed, date: date)
+            } catch {
                 simulation?.suspend()
                 simulationRuntimeError = "Simulation interrupted: \(error.localizedDescription)"
                 record(simulationError ?? error.localizedDescription)
             }
         }
         if playback?.state != .running { simulation?.suspend() }
+        if telemetrySample { cadenceSampleUptime = now }
+        if let playback, let position = playback.position {
+            cadenceGuidance = cadenceEvaluator?.evaluate(
+                now: now, active: playback.state == .running,
+                connected: connected && hasControl, intervalIndex: position.index,
+                targetWatts: Double(position.targetWatts), ftp: playback.ftp,
+                explicitCadence: position.cadence, cadence: cadence, sampleTimestamp: cadenceSampleUptime)
+            activeCue =
+                playback.state == .running
+                ? playback.workout.cues?.last(where: {
+                    playback.elapsed >= $0.offset && playback.elapsed < $0.offset + $0.duration
+                })?.message : nil
+        }
         if let error = playback?.error { record("Workout interrupted: \(error)") }
         if lastWorkoutLogTime.map({ now - $0 >= 15 }) ?? true {
             lastWorkoutLogTime = now
-            record("Workout elapsed \(playback?.elapsed ?? 0) s, measured \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { "\($0) rpm" } ?? "unavailable").")
+            record(
+                "Workout elapsed \(playback?.elapsed ?? 0) s, measured \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { "\($0) rpm" } ?? "unavailable")."
+            )
         }
+        captureRide(telemetrySample: telemetrySample)
         if let command { perform(command) }
         onWorkoutUpdate?()
     }
@@ -238,8 +344,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         workoutWatchdog?.cancel()
         workoutWatchdog = Task { [weak self] in
             while let self, self.playback?.state == .running {
-                do { try await Task.sleep(for: .seconds(1)) }
-                catch { return }
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 guard self.playback?.state == .running else { return }
                 if self.telemetryDate.map({ Date().timeIntervalSince($0) > 3 }) ?? true {
                     self.serviceWorkout()
@@ -248,9 +353,15 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    init(configuration: RideConfiguration) {
+    init(configuration: RideConfiguration, archiveStore: RideArchiveStore) {
         self.configuration = configuration
+        self.archiveStore = archiveStore
         super.init()
+        archiveStore.onDelete = { [weak self] id in
+            guard self?.currentArchive?.id == id else { return }
+            self?.currentArchive = nil
+            self?.archiveError = nil
+        }
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         do {
             let directory = try FileManager.default.url(
@@ -258,17 +369,155 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             )
             let url = directory.appendingPathComponent("trainer-diagnostic.txt")
             if FileManager.default.fileExists(atPath: url.path) {
-                events = Array(try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init).suffix(500))
+                events = Array(
+                    try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+                        .suffix(500))
                 diagnosticFile = url
             }
         } catch {
             persistenceError = "Cannot restore diagnostic log: \(error.localizedDescription)"
         }
     }
+    func captureRide(telemetrySample: Bool = false) {
+        guard var archive = currentArchive, archive.endedAt == nil, let playback else { return }
+        let now = Date()
+        var stateChanged = false
+        do {
+            if telemetrySample, [.running, .finishing].contains(playback.state),
+                let date = telemetryDate, date >= archive.startedAt,
+                archive.samples.last.map({ date.timeIntervalSince($0.date) >= 1 })
+                    ?? (playback.elapsed >= 1)
+            {
+                let hr = receivedHeartRate.flatMap {
+                    (0...3).contains(date.timeIntervalSince($0.date)) && $0.date != archivedHeartRateDate
+                        ? $0 : nil
+                }
+                let simulated = simulation?.metrics
+                let sample = RideArchiveSample(
+                    date: date, activeElapsed: playback.elapsed,
+                    power: power, cadence: cadence, heartRate: hr?.value,
+                    target: playback.position?.targetWatts,
+                    interval: playback.position.map { $0.index + 1 }, intensity: playback.intensity,
+                    simulatedSpeed: simulated?.speed, simulatedDistance: simulated?.distance,
+                    heartRateSampleDate: hr?.date)
+                try archive.append(sample: sample)
+                if let hr { archivedHeartRateDate = hr.date }
+            }
+            let state: RideArchiveEvent.State =
+                playback.state == .running
+                ? .running
+                : playback.state == .completed
+                    ? .finished : playback.state == .interrupted ? .interrupted : .paused
+            if archive.events.last?.state != state || archive.events.last?.intensity != playback.intensity {
+                try archive.append(
+                    event: RideArchiveEvent(
+                        state: state, date: now, activeElapsed: playback.elapsed,
+                        intensity: playback.intensity, simulatedDistance: simulation?.metrics.distance))
+                stateChanged = true
+            }
+            if let recordingMetrics { try archive.setRecordingMetrics(recordingMetrics) }
+            currentArchive = archive
+            let uptime = ProcessInfo.processInfo.systemUptime
+            if stateChanged || archiveLastWrite.map({ uptime - $0 >= 5 }) ?? true {
+                try archiveStore.save(archive)
+                archiveLastWrite = uptime
+                archiveError = nil
+            }
+        } catch {
+            currentArchive = archive
+            archiveError =
+                "Ride checkpoint failed: \(error.localizedDescription). Keep the app open and retry saving before leaving."
+            record(archiveError ?? error.localizedDescription)
+        }
+    }
+
+    func recordWatchMetrics(
+        heartRate: Double? = nil, date: Date = Date(), summary: RecordingMetrics? = nil
+    ) {
+        if let heartRate { receivedHeartRate = (heartRate, date) }
+        if let summary { recordingMetrics = summary }
+        captureRide()
+    }
+
+    func saveArchiveNow() {
+        archiveLastWrite = nil
+        captureRide()
+        if let currentArchive {
+            do {
+                try archiveStore.save(currentArchive)
+                archiveError = nil
+            } catch { archiveError = error.localizedDescription }
+        }
+    }
+
+    func recordHealthReceipt(_ receipt: RideHealthReceipt, rideID: UUID, summary: RecordingMetrics?)
+        throws
+    {
+        if currentArchive?.id == rideID {
+            try currentArchive?.setHealthReceipt(receipt)
+            if let summary { try currentArchive?.setRecordingMetrics(summary) }
+            if let currentArchive { try archiveStore.save(currentArchive) }
+        } else {
+            try archiveStore.setHealthReceipt(receipt, for: rideID)
+            if let summary { try archiveStore.setRecordingMetrics(summary, for: rideID) }
+        }
+    }
+
+    func reconcileRecoveredDistance(_ distance: Double) {
+        guard recoveredWatchRide, playback?.state == .interrupted,
+            let configuration = simulation?.configuration, let existing = simulation?.metrics.distance
+        else { return }
+        do {
+            simulation = try RideSimulation(configuration: configuration, recoveredDistance: max(distance, existing))
+        } catch {
+            simulationRuntimeError = "Recovered Watch distance rejected: \(error.localizedDescription)"
+            record(simulationError ?? error.localizedDescription)
+        }
+    }
+
+    func restoreRide(_ id: UUID) async {
+        guard !workoutOwnsTrainer, let archive = archiveStore.ride(id: id), archive.isRecoverable else {
+            playbackStatus = "Recovery requires an unfinished local ride and no active ride."
+            return
+        }
+        guard await prepareForRide(), let range = powerRange else { return }
+        guard archive.trainer.id == peripheral?.identifier else {
+            playbackStatus =
+                "Recovery blocked: connect the original trainer \(archive.trainer.name). No target was sent."
+            return
+        }
+        do {
+            let elapsed = min(archive.activeDuration, archive.workout.duration.nextDown)
+            playback = try WorkoutPlayback(
+                recovering: archive.workout, ftp: archive.ftp, range: range,
+                elapsed: elapsed, intensity: archive.currentIntensity)
+            simulation = try archive.simulation.map {
+                try RideSimulation(configuration: $0, recoveredDistance: archive.simulatedDistance ?? 0)
+            }
+            cadenceEvaluator = try CadenceGuidanceEvaluator(
+                configuration: archive.cadenceConfiguration ?? configuration.cadence.snapshot())
+            cadenceGuidance = nil
+            activeCue = nil
+            currentArchive = archive
+            playbackID = archive.id
+            recoveredWatchRide = archive.recordingMode == .watch
+            playbackStatus =
+                recoveredWatchRide
+                ? "Checkpoint recovered. Reconnect the existing paused recording on Watch, or finish trainer here and end locally on Watch."
+                : "Checkpoint recovered. Resume explicitly; no resistance target has been sent."
+            captureRide()
+            onWorkoutUpdate?()
+        } catch {
+            playbackStatus =
+                "Checkpoint recovery failed: \(error.localizedDescription). No automatic trainer resume."
+            record(playbackStatus)
+        }
+    }
 
     var canRequestControl: Bool {
-        connected && controlSubscribed && powerSupported && powerRange != nil && !pending && !stopFlow.isInProgress &&
-            (!workoutOwnsTrainer || playback?.state == .interrupted || playback?.state == .paused)
+        connected && controlSubscribed && powerSupported && powerRange != nil && !pending
+            && !stopFlow.isInProgress
+            && (!workoutOwnsTrainer || playback?.state == .interrupted || playback?.state == .paused)
     }
 
     func scan() {
@@ -276,12 +525,14 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         scanning = true
         scanTimeout?.cancel()
         scanTimeout = Task {
-            do { try await Task.sleep(for: .seconds(12)) }
-            catch { return }
+            do { try await Task.sleep(for: .seconds(12)) } catch { return }
             central?.stopScan()
             scanning = false
             reconnectPreferred = false
-            if !connected, !isConnecting { status = "Search finished. Select a trainer, or retry with the trainer powered on and Bluetooth enabled." }
+            if !connected, !isConnecting {
+                status =
+                    "Search finished. Select a trainer, or retry with the trainer powered on and Bluetooth enabled."
+            }
         }
         if central == nil {
             central = CBCentralManager(delegate: self, queue: .main)
@@ -308,11 +559,11 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         central?.connect(device.peripheral)
         connectionTimeout?.cancel()
         connectionTimeout = Task {
-            do { try await Task.sleep(for: .seconds(12)) }
-            catch { return }
+            do { try await Task.sleep(for: .seconds(12)) } catch { return }
             guard let peripheral, !connected else { return }
             central?.cancelPeripheralConnection(peripheral)
-            preparationError = "Connection timed out. Keep the trainer nearby and close other cycling apps before retrying."
+            preparationError =
+                "Connection timed out. Keep the trainer nearby and close other cycling apps before retrying."
             status = preparationError ?? "Connection timed out."
             self.peripheral = nil
         }
@@ -343,16 +594,23 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func requestControl() {
-        guard canRequestControl else { record("Control request blocked: FTMS capabilities are not ready."); return }
+        guard canRequestControl else {
+            record("Control request blocked: FTMS capabilities are not ready.")
+            return
+        }
         send(Data([0x00]))
     }
 
     func beginSequence() {
-        guard !workoutOwnsTrainer, !sequenceActive, hasControl, trainerRunning, !pending, !stopFlow.isInProgress,
-              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3, let range = powerRange,
-              range.contains(0),
-              (80...120).allSatisfy(range.contains) else {
-            record("Sequence blocked: fresh telemetry, acknowledged trainer start/control, supported 0 W, and an 80–120 W range in 1 W steps are required.")
+        guard !workoutOwnsTrainer, !sequenceActive, hasControl, trainerRunning, !pending,
+            !stopFlow.isInProgress,
+            let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3, let range = powerRange,
+            range.contains(0),
+            (80...120).allSatisfy(range.contains)
+        else {
+            record(
+                "Sequence blocked: fresh telemetry, acknowledged trainer start/control, supported 0 W, and an 80–120 W range in 1 W steps are required."
+            )
             return
         }
         sequenceStart = ProcessInfo.processInfo.systemUptime
@@ -360,7 +618,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         sequenceTarget = nil
         lastSequenceSampleTime = nil
         sequenceActive = true
-        record("\(activeTestLength.rawValue)-minute diagnostic sequence armed. Targets: 80 W / 100 W / 100–120 W ramp / 80 W, \(Int(activeTestLength.stageDuration)) seconds each.")
+        record(
+            "\(activeTestLength.rawValue)-minute diagnostic sequence armed. Targets: 80 W / 100 W / 100–120 W ramp / 80 W, \(Int(activeTestLength.stageDuration)) seconds each."
+        )
         serviceSequence()
     }
 
@@ -369,12 +629,16 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         if lastSequenceSampleTime.map({ elapsed - $0 >= 15 }) ?? true {
             lastSequenceSampleTime = elapsed
-            record("Telemetry elapsed \(String(format: "%.3f", elapsed)) s, measured power \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { String(format: "%.1f rpm", $0) } ?? "unavailable").")
+            record(
+                "Telemetry elapsed \(String(format: "%.3f", elapsed)) s, measured power \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { String(format: "%.1f rpm", $0) } ?? "unavailable")."
+            )
         }
         guard let target = DiagnosticSchedule.target(at: elapsed, length: activeTestLength) else {
             sequenceStart = nil
             sequenceActive = false
-            record("Diagnostic timeline complete after \(elapsed) seconds; requesting acknowledged 0 W before stop.")
+            record(
+                "Diagnostic timeline complete after \(elapsed) seconds; requesting acknowledged 0 W before stop."
+            )
             stopTrainer()
             return
         }
@@ -385,8 +649,10 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func setTarget(_ watts: Int) {
-        guard !workoutOwnsTrainer, !stopFlow.isInProgress, hasControl, let range = powerRange, range.contains(watts),
-              let signed = Int16(exactly: watts) else {
+        guard !workoutOwnsTrainer, !stopFlow.isInProgress, hasControl, let range = powerRange,
+            range.contains(watts),
+            let signed = Int16(exactly: watts)
+        else {
             record("Target rejected: acquire control and use a supported power increment/range.")
             return
         }
@@ -399,7 +665,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func startTrainer() {
         guard !workoutOwnsTrainer, hasControl, !stopFlow.isInProgress, !sequenceActive else {
-            record("Start rejected: acquire control and wait for the active diagnostic or stop flow to finish.")
+            record(
+                "Start rejected: acquire control and wait for the active diagnostic or stop flow to finish."
+            )
             return
         }
         send(Data([0x07]))
@@ -409,17 +677,20 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         defer { onWorkoutUpdate?() }
         simulation?.suspend()
         if workoutOwnsTrainer, let state = playback?.state,
-           ![.pausing, .finishing, .interrupted].contains(state) {
+            ![.pausing, .finishing, .interrupted].contains(state)
+        {
             _ = playback?.finish(now: ProcessInfo.processInfo.systemUptime)
         }
         sequenceStart = nil
         sequenceActive = false
         guard !stopFlow.isInProgress else { return }
         guard hasControl, connected, controlSubscribed, powerRange?.contains(0) == true else {
-            failStop("Cannot request reduced load: control/connection or supported 0 W target unavailable.")
+            failStop(
+                "Cannot request reduced load: control/connection or supported 0 W target unavailable.")
             return
         }
-        stopStatus = pending ? "Waiting for the pending command, then requesting 0 W…" : "Requesting 0 W…"
+        stopStatus =
+            pending ? "Waiting for the pending command, then requesting 0 W…" : "Requesting 0 W…"
         record("Reduced-load stop requested. 0 W acknowledgment is required before sending FTMS stop.")
         if let command = stopFlow.begin(commandPending: pending) {
             sendStopCommand(command)
@@ -447,14 +718,17 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func disconnect() {
         guard let peripheral else { return }
-        interruptWorkout("Disconnect requested; workout frozen. The trainer may retain its last target.")
-        record("Disconnect requested. The trainer may retain its last target; this is NOT a load release.")
+        interruptWorkout(
+            "Disconnect requested; workout frozen. The trainer may retain its last target.")
+        record(
+            "Disconnect requested. The trainer may retain its last target; this is NOT a load release.")
         central?.cancelPeripheralConnection(peripheral)
     }
 
     private func send(_ data: Data) {
         guard !pending, connected, controlSubscribed, let peripheral, let controlPoint,
-              let opcode = data.first else {
+            let opcode = data.first
+        else {
             record("Command not sent: control point unavailable or another command is pending.")
             interruptWorkout("Trainer command could not be sent; state unconfirmed.")
             if stopFlow.isInProgress { failStop("Reduced-load stop command could not be sent.") }
@@ -462,11 +736,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
         pending = true
         pendingOpcode = opcode
-        record("Issued FTMS opcode \(opcode), payload \(data.map { String(format: "%02X", $0) }.joined(separator: " ")).")
+        record(
+            "Issued FTMS opcode \(opcode), payload \(data.map { String(format: "%02X", $0) }.joined(separator: " "))."
+        )
         peripheral.writeValue(data, for: controlPoint, type: .withResponse)
         timeout = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(5)) }
-            catch { return }
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
             guard let self, self.pendingOpcode == opcode else { return }
             self.clearPending()
             self.interruptWorkout("Trainer command timed out; reacquire control before resuming.")
@@ -474,7 +749,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             self.trainerRunning = false
             self.sequenceStart = nil
             self.sequenceActive = false
-            if self.stopFlow.isInProgress { self.failStop("Command \(opcode) timed out; reacquire control before retrying.") }
+            if self.stopFlow.isInProgress {
+                self.failStop("Command \(opcode) timed out; reacquire control before retrying.")
+            }
             self.record("Command \(opcode) timed out. Trainer state unconfirmed; reacquire control.")
         }
     }
@@ -523,7 +800,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
         if central.state != .poweredOn {
             interruptWorkout("Bluetooth unavailable; workout frozen and trainer state unconfirmed.")
-            if stopFlow.state != .idle { failStop("Bluetooth is unavailable; load reduction cannot be confirmed.") }
+            if stopFlow.state != .idle {
+                failStop("Bluetooth is unavailable; load reduction cannot be confirmed.")
+            }
             hasControl = false
             trainerRunning = false
             sequenceStart = nil
@@ -532,23 +811,29 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
-                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+    func centralManager(
+        _ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any], rssi RSSI: NSNumber
+    ) {
         let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
         guard let name else { return }
         if !devices.contains(where: { $0.id == peripheral.identifier }) {
             devices.append(Device(id: peripheral.identifier, name: name, peripheral: peripheral))
         }
         let resumable = playback.map { [.paused, .interrupted].contains($0.state) } ?? false
-        if reconnectPreferred, (!workoutOwnsTrainer || resumable), !sequenceActive,
-           peripheral.identifier.uuidString == UserDefaults.standard.string(forKey: "trainerID") {
+        if reconnectPreferred, !workoutOwnsTrainer || resumable, !sequenceActive,
+            peripheral.identifier.uuidString == UserDefaults.standard.string(forKey: "trainerID")
+        {
             reconnectPreferred = false
             connect(Device(id: peripheral.identifier, name: name, peripheral: peripheral))
         }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        guard self.peripheral === peripheral else { central.cancelPeripheralConnection(peripheral); return }
+        guard self.peripheral === peripheral else {
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
         connectionTimeout?.cancel()
         connected = true
         services = []
@@ -557,7 +842,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         peripheral.discoverServices(nil)
     }
 
-    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+    func centralManager(
+        _ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
+    ) {
         guard self.peripheral === peripheral else { return }
         connectionTimeout?.cancel()
         self.peripheral = nil
@@ -565,10 +852,14 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         record(status)
     }
 
-    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+    func centralManager(
+        _ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
+    ) {
         guard self.peripheral === peripheral else { return }
         interruptWorkout("Trainer disconnected; workout frozen. Reconnect and resume explicitly.")
-        if stopFlow.state != .idle { failStop("Connection ended; current trainer load cannot be confirmed.") }
+        if stopFlow.state != .idle {
+            failStop("Connection ended; current trainer load cannot be confirmed.")
+        }
         connected = false
         sequenceStart = nil
         sequenceActive = false
@@ -588,7 +879,11 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        if let error { status = error.localizedDescription; record("Service discovery failed: \(status)"); return }
+        if let error {
+            status = error.localizedDescription
+            record("Service discovery failed: \(status)")
+            return
+        }
         for service in peripheral.services ?? [] {
             services.append(service.uuid.uuidString)
             record("Service \(service.uuid.uuidString)")
@@ -602,13 +897,21 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        if let error { record("Characteristic discovery failed: \(error.localizedDescription)"); return }
+    func peripheral(
+        _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?
+    ) {
+        if let error {
+            record("Characteristic discovery failed: \(error.localizedDescription)")
+            return
+        }
         for characteristic in service.characteristics ?? [] {
-            record("Characteristic \(service.uuid.uuidString)/\(characteristic.uuid.uuidString), properties \(characteristic.properties.rawValue)")
+            record(
+                "Characteristic \(service.uuid.uuidString)/\(characteristic.uuid.uuidString), properties \(characteristic.properties.rawValue)"
+            )
             if service.uuid == CBUUID(string: "180A"),
-               ["2A26", "2A24", "2A29"].contains(characteristic.uuid.uuidString),
-               characteristic.properties.contains(.read) {
+                ["2A26", "2A24", "2A29"].contains(characteristic.uuid.uuidString),
+                characteristic.properties.contains(.read)
+            {
                 peripheral.readValue(for: characteristic)
             }
             guard service.uuid == CBUUID(string: "1826") else { continue }
@@ -616,9 +919,13 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             case "2ACC", "2AD8":
                 if characteristic.properties.contains(.read) { peripheral.readValue(for: characteristic) }
             case "2AD2":
-                if characteristic.properties.contains(.notify) { peripheral.setNotifyValue(true, for: characteristic) }
+                if characteristic.properties.contains(.notify) {
+                    peripheral.setNotifyValue(true, for: characteristic)
+                }
             case "2AD9":
-                if characteristic.properties.contains(.write) && characteristic.properties.contains(.indicate) {
+                if characteristic.properties.contains(.write)
+                    && characteristic.properties.contains(.indicate)
+                {
                     controlPoint = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)
                 } else {
@@ -629,7 +936,10 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+    func peripheral(
+        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
         if let error {
             if characteristic.uuid == CBUUID(string: "2AD9") {
                 interruptWorkout("Trainer control subscription failed: \(error.localizedDescription)")
@@ -643,14 +953,18 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             if !controlSubscribed {
                 interruptWorkout("Trainer control indications were disabled; workout frozen.")
                 hasControl = false
-                if stopFlow.isInProgress { failStop("Control indications unavailable; reduced load is unconfirmed.") }
+                if stopFlow.isInProgress {
+                    failStop("Control indications unavailable; reduced load is unconfirmed.")
+                }
                 clearPending()
             }
             record("FTMS control indications \(controlSubscribed ? "enabled" : "disabled").")
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+    func peripheral(
+        _ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
+    ) {
         if let error {
             interruptWorkout("Trainer write failed: \(error.localizedDescription)")
             if stopFlow.isInProgress { failStop("Bluetooth write failed: \(error.localizedDescription)") }
@@ -663,7 +977,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+    func peripheral(
+        _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
+    ) {
         defer { if characteristic.uuid == CBUUID(string: "2AD9") { onWorkoutUpdate?() } }
         if let error {
             if characteristic.uuid == CBUUID(string: "2AD2") { simulation?.suspend() }
@@ -678,7 +994,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         do {
             switch characteristic.uuid.uuidString {
             case "2A26", "2A24", "2A29":
-                guard let text = String(data: data, encoding: .utf8) else { throw ProtocolError.invalidResponse }
+                guard let text = String(data: data, encoding: .utf8) else {
+                    throw ProtocolError.invalidResponse
+                }
                 record("Device information \(characteristic.uuid.uuidString): \(text)")
             case "2ACC":
                 powerSupported = try FTMS.supportsTargetPower(data)
@@ -698,7 +1016,8 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             case "2AD9":
                 let response = try FTMS.response(data)
                 guard response.opcode == pendingOpcode else {
-                    record("Unexpected control response for opcode \(response.opcode); not counted as success.")
+                    record(
+                        "Unexpected control response for opcode \(response.opcode); not counted as success.")
                     return
                 }
                 clearPending()
@@ -727,13 +1046,18 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                         if response.opcode == 7 { monitorWorkoutTelemetry() }
                     }
                 } else {
-                    interruptWorkout("Trainer rejected command \(response.opcode), result \(response.result).")
-                    if stopFlow.isInProgress { failStop("Trainer rejected opcode \(response.opcode), result \(response.result).") }
+                    interruptWorkout(
+                        "Trainer rejected command \(response.opcode), result \(response.result).")
+                    if stopFlow.isInProgress {
+                        failStop("Trainer rejected opcode \(response.opcode), result \(response.result).")
+                    }
                     hasControl = false
                     trainerRunning = false
                     sequenceStart = nil
                     sequenceActive = false
-                    record("Trainer rejected opcode \(response.opcode), result \(response.result). State unconfirmed.")
+                    record(
+                        "Trainer rejected opcode \(response.opcode), result \(response.result). State unconfirmed."
+                    )
                 }
             default: break
             }

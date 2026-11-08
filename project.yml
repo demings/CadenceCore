@@ -28,10 +28,22 @@ targets:
       path: Configuration/iPhone-Info.plist
       properties:
         NSBluetoothAlwaysUsageDescription: Connect to your indoor trainer to inspect telemetry and test ERG control.
-        NSHealthShareUsageDescription: Show live heart rate from your CadenceCore Watch workout.
+        NSHealthShareUsageDescription: Show Watch heart rate and inspect saved cycling workouts, energy, trainer metrics and simulated travel in Health.
         NSHealthUpdateUsageDescription: Coordinate your indoor cycling workout with Apple Watch.
         UIBackgroundModes: [bluetooth-central]
         UILaunchScreen: {}
+        LSSupportsOpeningDocumentsInPlace: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Zwift Workout
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.zwift.workout]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.zwift.workout
+            UTTypeDescription: Zwift Workout
+            UTTypeConformsTo: [public.xml]
+            UTTypeTagSpecification:
+              public.filename-extension: [zwo]
     entitlements:
       path: Configuration/iPhone.entitlements
       properties:
@@ -39,7 +51,7 @@ targets:
   CadenceCoreWatch:
     type: application
     platform: watchOS
-    sources: [Watch, Shared/RideMessage.swift, Shared/RideSimulation.swift]
+    sources: [Watch, Shared/RideMessage.swift, Shared/RideSimulation.swift, Shared/CadenceGuidance.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cadencecore.personal.watch
@@ -50,8 +62,8 @@ targets:
         WKCompanionAppBundleIdentifier: com.cadencecore.personal
         WKApplication: true
         WKBackgroundModes: [workout-processing]
-        NSHealthShareUsageDescription: Measure your heart rate during indoor cycling workouts.
-        NSHealthUpdateUsageDescription: Save indoor cycling workouts with heart rate, energy, measured trainer power and cadence, and optional simulated speed and distance to Health.
+        NSHealthShareUsageDescription: Measure heart rate and read Watch active and resting energy during indoor cycling workouts.
+        NSHealthUpdateUsageDescription: Save indoor cycling workouts with heart rate, active and resting energy, measured trainer power and cadence, and optional simulated speed and distance to Health.
     entitlements:
       path: Configuration/Watch.entitlements
       properties:

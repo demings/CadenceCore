@@ -2,6 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Zwift Workout</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array><string>com.zwift.workout</string></array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.zwift.workout</string>
+			<key>UTTypeDescription</key>
+			<string>Zwift Workout</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.xml</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>zwo</string></array>
+			</dict>
+		</dict>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
@@ -21,7 +52,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Connect to your indoor trainer to inspect telemetry and test ERG control.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Show live heart rate from your CadenceCore Watch workout.</string>
+	<string>Show Watch heart rate and inspect saved cycling workouts, energy, trainer metrics and simulated travel in Health.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Coordinate your indoor cycling workout with Apple Watch.</string>
 	<key>UIBackgroundModes</key>

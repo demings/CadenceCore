@@ -56,6 +56,7 @@ public struct WorkoutPlayback: Sendable {
     public private(set) var state: State = .ready
     public private(set) var elapsed: Double = 0
     public private(set) var error: String?
+    public private(set) var intensity: Double = 1
     private var anchor: Double?
     private var lastService: Double?
     private var lastTarget: Int?
@@ -88,7 +89,7 @@ public struct WorkoutPlayback: Sendable {
         var start = 0.0
         for (index, interval) in workout.intervals.enumerated() {
             if elapsed < start + interval.duration {
-                let raw = interval.watts(at: elapsed - start, ftp: ftp)
+                let raw = interval.watts(at: elapsed - start, ftp: ftp) * intensity
                 let steps = Int(((raw - Double(range.minimum)) / Double(range.increment)).rounded())
                 let maximumSteps = (range.maximum - range.minimum) / range.increment
                 let watts = range.minimum + min(maximumSteps, max(0, steps)) * range.increment
@@ -106,6 +107,39 @@ public struct WorkoutPlayback: Sendable {
         error = nil
         lastTarget = position.targetWatts
         return .target(position.targetWatts)
+    }
+
+    public mutating func adjustIntensity(_ value: Double, commandPending: Bool) throws -> Command? {
+        guard [.running, .paused].contains(state), !commandPending,
+              value.isFinite, (0.5...1.5).contains(value),
+              workout.intervals.allSatisfy({
+                  [$0.startPower, $0.endPower].allSatisfy {
+                      $0 * ftp * value >= Double(range.minimum) && $0 * ftp * value <= Double(range.maximum)
+                  }
+              }) else {
+            throw WorkoutImportError.invalid("intensity must be 50–150%, fit the trainer range, and change only during running/paused playback with no pending command.")
+        }
+        intensity = value
+        guard state == .running, let position, position.targetWatts != lastTarget else { return nil }
+        lastTarget = position.targetWatts
+        return .target(position.targetWatts)
+    }
+
+    public init(recovering workout: Workout, ftp: Double, range: PowerRange,
+                elapsed: Double, intensity: Double = 1) throws {
+        try self.init(workout: workout, ftp: ftp, range: range)
+        guard elapsed.isFinite, (0..<workout.duration).contains(elapsed),
+              intensity.isFinite, (0.5...1.5).contains(intensity),
+              workout.intervals.allSatisfy({
+                  [$0.startPower, $0.endPower].allSatisfy {
+                      $0 * ftp * intensity >= Double(range.minimum) &&
+                          $0 * ftp * intensity <= Double(range.maximum)
+                  }
+              }) else { throw WorkoutImportError.invalid("invalid interrupted ride checkpoint.") }
+        self.elapsed = elapsed
+        self.intensity = intensity
+        state = .interrupted
+        error = "Recovered checkpoint. Trainer state is unconfirmed; resume explicitly."
     }
 
     public mutating func acknowledged(opcode: UInt8, now: Double) -> Command? {

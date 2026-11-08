@@ -89,6 +89,14 @@ public struct RideSimulation: Sendable {
         self.configuration = configuration
     }
 
+    public init(configuration: SimulationConfiguration, recoveredDistance: Double) throws {
+        try self.init(configuration: configuration)
+        guard recoveredDistance.isFinite, (0...4_320_000).contains(recoveredDistance) else {
+            throw SimulationError.invalidValues
+        }
+        metrics = SimulatedMetrics(speed: nil, distance: recoveredDistance, date: nil)
+    }
+
     public mutating func suspend() {
         previousTime = nil
         previousActiveTime = nil

@@ -1,28 +1,28 @@
 # CadenceCore
 
-Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, ERG playback, Watch-coordinated Health recording, and simulated speed/distance**.
+Native iPhone + Apple Watch ERG training app with **ZWO imports, Watch-first Health recording, cadence coaching, simulated travel, interrupted-ride recovery, local history and manual TCX export**.
 
 The original app icon combines a teal **C** with a power/heart-rate pulse on a dark background. Matching opaque 1024-pixel icons are included in the iPhone and Watch asset catalogs; the operating system applies its own rounded or circular mask.
 
-The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview, iPhone execution, coordinated Watch controls/Health saving, and simulated flat-road speed/distance are implemented. **Cadence guidance, history/recovery and Strava export are not implemented yet**. The user confirms Watch start/pause/resume/finish and one saved workout in Health/Fitness. Full native Indoor Cycle metric parity and simulation Health/display behavior still require acceptance.
+The agreed MVP is implemented in software. The user previously confirmed trainer playback, Watch start/pause/resume/finish, a single Health/Fitness save, and consecutive rides. The newly added recording details, cadence guidance, history/export and crash recovery still require the real-device acceptance round below. Supported HealthKit metrics are collected when available; proprietary Apple Workout features, arbitrary ring credit and automatic Strava sync are not promised.
 
 ## Workout library
 
-The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Open a workout for a single setup flow: **training targets → trainer → start your ride**. Enter your FTP (1–2000 W) there or in Settings to see interval watt targets alongside % FTP, a power-profile chart, and an accessible interval-list alternative. FTP and simulation preferences share one observable configuration owner and existing persisted keys; a ride keeps an immutable snapshot.
+The **Workouts** tab supports Files-based ZWO import, original example workouts, name search, favorites, local SwiftData persistence, rename, duplicate, and confirmed deletion. Open a workout for a single setup flow: **training targets → trainer → start your ride**. Enter your FTP (1–2000 W) there or in Settings to see interval watt targets alongside % FTP, a power-profile chart, and an accessible interval-list alternative. FTP and simulation preferences share one observable configuration owner and existing persisted keys; a ride keeps an immutable snapshot.
 
 The FTP number pad has an inline **Done** button to dismiss it; scrolling also dismisses it interactively. No FTP default is assumed.
 
 ## Guided setup and navigation
 
-- **Workouts** is the library and guided ride setup; **Ride** always provides current controls or the next-ride/device status; **Settings** groups FTP, optional simulation, devices and troubleshooting.
+- **Workouts** is the library and guided setup; **Ride** contains current controls and interrupted checkpoints; **History** contains ride summaries, separate local/Health save states and TCX sharing; **Settings** groups training preferences, devices and troubleshooting.
 - **Find my trainer** requests Bluetooth/discovery in context. Choose your trainer once; later explicit searches reconnect only its remembered identifier, never an arbitrary nearby trainer. Search and connection attempts are bounded to 12 seconds and cancellable. Change trainer is allowed only when no ride/test or acknowledged trainer activity is active.
 - **Prepare trainer**, or **Prepare ride on Watch**, checks connection, verified FTMS power capabilities/range, control subscription, acknowledged control, idle command/stop flow and telemetry no older than three seconds. Preparation requests control automatically when capabilities are ready, but sends no target/start command. Pedal briefly when fresh measurements are requested.
 - Watch preparation first checks the trainer, then requests Health permissions if needed. **Queued** and **delivered** are distinct: open the Watch app and wait for its delivery acknowledgment before starting. Restaging updates the next-ride snapshot, not an active ride. An active Watch HR diagnostic must be ended/discarded before a recorded ride.
-- Low-level tests and the explicit **Reduce load to 0 W and stop** control remain under **Settings → Diagnostics and exportable log**. They are not prerequisites for normal riding. iPhone-only, unsaved playback is a secondary option within workout setup.
-- Paused/interrupted rides expose trainer reconnection/control preparation within **Ride**; restoring connection never resumes ERG automatically. A lost Watch mirroring session still requires explicitly ending the recording rather than pretending it can resume.
+- Low-level tests and **Reduce load to 0 W and stop** remain under **Settings → Diagnostics and exportable log**. They are not prerequisites. iPhone-only playback is a secondary option: it saves locally and exports TCX, but has no Health recording or Watch heart rate.
+- Paused/interrupted rides expose trainer preparation within **Ride**. Restoring connection/checkpoints never automatically resumes ERG. Explicit Watch reconnection can continue the same recovered Health session after matching iPhone recovery; unconfirmed or unavailable recordings must be ended locally and reviewed.
 - Watch start errors include the operation, localized message and error domain/code. Last error text remains in Watch troubleshooting and, when reachable, iPhone Settings. Watch waits up to eight seconds for prepared/ended lifecycle transitions instead of immediately starting mirroring or reusing a finishing session. An unconfirmed end keeps the local-end escape hatch rather than silently claiming cleanup.
 
-The user confirms that guided preparation, starting a short ride on Watch, finishing/saving, and then starting a second ride work on the actual devices after this milestone. This closes the reported startup acceptance blocker for that sequence; the original error's exact cause was not captured. It does not verify long-duration/interruption behavior, full native Indoor Cycle metric parity or simulated Health sample completeness. If startup fails again, share the displayed operation/domain/code. Crash/relaunch recovery of an existing Health session is still not implemented; do not assume progress is recoverable.
+The user confirms that guided preparation, starting a short ride on Watch, finishing/saving, and then starting a second ride work on the actual devices after this milestone. This closes the reported startup acceptance blocker for that sequence; the original error's exact cause was not captured. It does not verify long-duration/interruption behavior, full native Indoor Cycle metric parity or simulated Health sample completeness. If startup fails again, share the displayed operation/domain/code. Existing Health-session recovery is now implemented conservatively, but crash/radio-loss acceptance is still outstanding.
 
 Supported UTF-8 cycling ZWO blocks:
 
@@ -30,7 +30,7 @@ Supported UTF-8 cycling ZWO blocks:
 - `Warmup`, `Cooldown`, `Ramp`: `Duration`, `PowerLow` (start), `PowerHigh` (end), optional `Cadence`.
 - `IntervalsT`: integer `Repeat`, `OnDuration`, `OffDuration`, `OnPower`, `OffPower`; optional `Cadence` for work phases and `CadenceResting` for recovery. Work cadence is not copied to recovery.
 
-Power values are fractions of FTP, from 0 to 3. Durations must be 0.1 seconds or greater. Limits: 1 MiB input, six hours expanded duration, 2000 expanded intervals, 1000 repetitions per block, 16 XML nesting levels, cadence 1–250 rpm. DTD/entity declarations, non-cycling sports, unsupported executable blocks and behavior-changing attributes are rejected explicitly. Metadata is retained for name/description; unknown top-level metadata produces warnings. Text cues and unsupported cadence attributes currently generate visible preview warnings rather than being silently interpreted.
+Power values are fractions of FTP, from 0 to 3. Durations must be 0.1 seconds or greater. Limits: 1 MiB input, six hours expanded duration, 2000 expanded intervals, 1000 repetitions per block, 16 XML nesting levels, cadence 1–250 rpm. DTD/entity declarations, non-cycling sports, unsupported executable blocks and behavior-changing attributes are rejected explicitly. Metadata is retained for name/description; unknown top-level metadata produces warnings. Supported `textevent` instructions are shown in preview and during their active-time window on both devices. Cues in an `IntervalsT` block occur once at the block-relative offset, not once per repetition. Unsupported cadence attributes remain explicit errors/warnings rather than being guessed.
 
 Imports retain their original source bytes locally. Import/persistence errors are visible and failed mutations roll back. No in-app interval editor or calendar is included.
 
@@ -72,6 +72,24 @@ Choose an appropriately easy workout and test a brief Watch-started ride. Verify
 
 Saving to Apple Fitness does **not** make Strava automatically import this third-party workout through its native Apple Health importer. Manual TCX export remains a future milestone.
 
+### Recording completeness and comparison
+
+Watch explicitly collects supported **active and resting energy** through HealthKit's live data source, alongside heart rate. Watch displays active/total kcal; iPhone shows the last mirrored average/maximum HR and energy summary for the coordinated ride. Total energy is shown only when both components exist, never inferred from trainer watts or replaced with zero. Denied sharing is reported; availability depends on Watch/HealthKit and permissions. These are Apple estimates, not a promise of identical native calories, zones or ring credit.
+
+Open **Settings → Inspect Health recording**, or **Inspect saved Health data** after a Watch ride:
+
+1. Tap **Load recent cycling workouts** and allow the read types you want to inspect. This is an explicit, read-only request; it does not start a ride, change trainer load, write another workout or automatically share data.
+2. Choose your ride and optionally a separate native Indoor Cycle reference of similar duration/effort. The list contains the latest 10 accessible cycling workouts within 30 days, identified by source/time; indoor metadata is reported rather than assumed.
+3. Tap **Inspect saved data**. Reports show source/identity, start/end, Health active duration, pause/resume event counts, HR average/maximum, active/resting/total energy, power/cadence, cycling speed/distance, accessible sample counts and timestamp coverage.
+4. Newly saved CadenceCore rides include the final iPhone active time and expected simulated distance in metadata, plus inclusion/stop-confirmation/warning flags. Inspection reports the Health-duration difference and checks saved distance within **1 m** of the expected aggregate. Mirroring/lifecycle latency can affect duration; local-end saves may contain only the last received iPhone total.
+5. Compare against Fitness separately for presentation, Activity credit and native HR zones. The app does not recreate proprietary zones/calculations or spoof Apple's native source.
+
+Missing samples mean **no accessible data**, not necessarily zero or failure: Health read-denial status is intentionally private and Watch sync can take time. Reload after sync. Queries inspect at most 10,000 samples per metric and explicitly mark truncation; coverage unions timestamp spans without filling gaps and is not proof of continuous sensor quality. Simulation's one aggregate distance sample spans the workout but contains only active fresh-telemetry distance, so its timestamp coverage must not be interpreted as travel during pauses.
+
+The optional **Share recording report** action shares only the visible summary text, including workout UUID/times/source/health summaries. Review it first; there is no automatic upload, raw-sample export or background collection by this inspector.
+
+This milestone makes supported recording inspectable; **full native Indoor Cycle parity remains pending device comparison**. Test a newly saved ride with a pause, simulation inclusion and one Health save, then inspect it and a native reference. Verify energy availability, pause events/duration, power/cadence/speed samples and the distance check. Repeat with simulation Health inclusion off; no simulated samples should appear. Permission denial must remain explicit rather than fabricated.
+
 ## Simulated speed and distance
 
 Open iPhone **Settings** to configure **Ride simulation**, then confirm setup. Simulation is off until configured; rider mass has no default and is not read from Health. Model settings persist locally. Updating/turning off settings affects the next ride or next **Send to Watch**, never a staged/active ride's snapshot.
@@ -100,7 +118,7 @@ iPhone owns the model/accumulator and shows **Simulated speed** (km/h) and **Sim
 
 After rebuilding **both apps**, configure simulation, resend a workout and try a short Watch ride. Check fresh speed/distance on both devices, unchanged distance during pause, and one saved workout after finish. Compare saved cycling distance in Health with iPhone's final simulated total (within 1 meter before UI rounding); verify cycling-speed samples and absence of GPS. Also verify opt-out and denied permissions. Actual-device Health/Fitness presentation remains unverified by simulator builds.
 
-The desired recording baseline is Apple's native Indoor Cycle: duration/pause events, HR, supported energy and summaries, plus measured trainer metrics and simulated speed/distance. A complete native-workout comparison, total-energy/zone availability and proprietary Fitness presentation remain a separate recording-parity acceptance task; missing values will not be fabricated.
+The desired recording baseline is Apple's native Indoor Cycle: duration/pause events, HR, supported energy and summaries, plus measured trainer metrics and simulated speed/distance. The inspection workflow above supports this comparison; actual-device availability and proprietary Fitness presentation remain acceptance tasks. Missing values are not fabricated.
 
 ## What this build does
 
@@ -162,6 +180,34 @@ If you regenerate after selecting your team, XcodeGen can remove manually edited
 
 The short locked-screen stage/automatic-finish test has passed on the user's trainer; longer continuity/interruption testing remains outstanding. Library/import development can proceed independently, but full workout operation must still pass end-to-end device acceptance.
 
-## Strava
+## Cadence guidance and intensity
 
-The eventual MVP uses TCX export and manual Strava website upload. Strava's native Apple Health importer excludes custom-app recordings; using a custom Watch app does not make them Apple Workout recordings.
+Settings contains editable advisory ranges: at most 75% FTP, 75–90 rpm; over 75% through 100%, 80–95 rpm; above 100%, 85–100 rpm. Explicit ZWO cadence takes precedence, including low-cadence drills. Guidance smooths fresh cadence, gives interval/resume grace, uses hysteresis, and suppresses feedback during pauses, stale data and no pedaling. These are suggestions, not scientifically individualized optima, and never change ERG power.
+
+Gentle Watch haptics are opt-in, require sustained deviation and are limited to one per 30 seconds. The iPhone ride dashboard and secondary Watch controls allow 50–150% session intensity. Every adjusted target is validated against trainer limits; FTP and the workout snapshot stay unchanged.
+
+## History, recovery and Strava
+
+Rides save to app-private, protected, atomic per-ride JSON files with a small manifest. Telemetry is sampled at up to 1 Hz and checkpoints flush every five seconds and on state changes; completed rides are not rewritten while another ride records. Limits are 100 rides, 21,600 samples per ride, 2,048 events and 128 MiB of referenced history. Limits and corruption produce visible errors, not silent trimming. Initial persistence failure blocks trainer start; a mid-ride failure offers **Retry local save**.
+
+Each archive preserves workout/FTP/intensity, trainer identity, simulation/cadence policy, pause/interruption events, measured telemetry and independent Health save receipt. Fresh Watch heart-rate readings are aligned once to a trainer sample within three seconds; original reading timestamps are retained, and missing data is not interpolated. Final simulated distance is captured at the state boundary, even without another telemetry sample.
+
+After relaunch, use **Ride → Recover this ride**, explicitly connect the original trainer, then resume. Recovery may replay up to the five-second checkpoint window; it never credits the termination gap. For a recovered Watch ride, use **Reconnect existing ride** on Watch only after iPhone recovery/preparation. The existing Watch session stays paused until iPhone confirms running. A last confirmed Watch distance can preserve a newer known simulation total without inventing travel in the gap.
+
+If Watch recovery finds an attempted but unconfirmed Health save, **Check saved workout** reconciles by the ride's stable external UUID. It never automatically calls finish/save again. Review Health and end the existing recording locally when reconnection is unavailable. **End local checkpoint** only closes local history: it does not reduce trainer resistance, stop Watch recording, or confirm Health saving.
+
+Completed History details offer **Export TCX**, a simulation inclusion toggle and native sharing to Files. Export remains available if Health saving fails. TCX contains measured power/cadence/heart rate, UTC timestamps, active duration, available energy and optional clearly disclosed simulated speed/distance, with separate tracks at pauses and gaps. No GPS, target watts masquerading as measurements, missing trackpoint zeros or inferred calories are inserted. Mandatory TCX Lap zero placeholders are disclosed in Notes. Empty measured rides cannot export. Re-export uses a stable activity identity/file URL.
+
+Upload the TCX manually at `https://www.strava.com/upload/select`. Automatic sync is excluded: Strava's native Health importer excludes custom-app recordings. A repeated manual upload may be rejected as a duplicate; it is not an automatic-upload retry. The external service may not retain simulation labels.
+
+### Remaining real-device acceptance
+
+1. Install both updated targets. Import a ZWO through Files/Open in CadenceCore, relaunch, and confirm library/search/favorites.
+2. Set FTP, rider mass/simulation consent and cadence preferences. Use **Five-Minute Ride Check** for a short Watch-started ride; pause/resume, adjust intensity, finish/save, then repeat a second ride.
+3. Check one Health/Fitness workout per ride, supported heart rate/energy/power/cadence, active timing and simulated speed/distance. Use **Settings → Inspect Health recording** to compare actual accessible samples with a native Indoor Cycle reference; permissions/sync may hide data.
+4. Export a TCX from History with simulation on/off, save/share it, and manually upload once to Strava. Inspect parsed power, cadence, heart rate, active time and simulated distance; do not assume an upload has been verified yet.
+5. Test comfortable explicit ZWO cadence drills, guidance-disabled and haptics-on modes; verify suggestions do not alter power.
+6. Test app switching, locked iPhone, wrist lowering and a longer ride. Then test Bluetooth loss and app relaunch safely: stop pedaling first, recover explicitly, and confirm no termination-gap distance or duplicate Health save.
+7. Verify light/dark mode, larger text and VoiceOver on your devices. The Watch separates glanceable metrics from wrist controls on vertically paged screens.
+
+Software validation includes deterministic model/protocol/archive tests, native paired builds, a real system Health-denial/empty-state UI workflow, and TCX validation against Garmin's public TCX v2 and ActivityExtension v2 schemas. Schema validation can be rerun with `CADENCECORE_TCX_SCHEMA=/path/to/local/validation.xsd swift test`; without local schemas that explicitly optional test is skipped.

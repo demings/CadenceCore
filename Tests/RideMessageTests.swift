@@ -7,6 +7,19 @@ private func snapshot(sequence: Int = 1, state: String = "running", date: Date?)
                  target: 100, power: 98, cadence: 85, telemetryDate: date, status: "Running")
 }
 
+@Test func snapshotAcknowledgmentsAreStableAndOptionalForLegacyDecoding() throws {
+    let command = UUID()
+    let original = RideSnapshot(sequence: 1, state: "running", elapsed: 1, interval: 1,
+        remaining: 59, target: 100, power: 100, cadence: 80, telemetryDate: Date(), status: "Running",
+        acknowledgedCommandID: command)
+    let data = try JSONEncoder().encode(original)
+    #expect(try JSONDecoder().decode(RideSnapshot.self, from: data).acknowledgedCommandID == command)
+    var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    legacy.removeValue(forKey: "acknowledgedCommandID")
+    #expect(try JSONDecoder().decode(RideSnapshot.self,
+        from: JSONSerialization.data(withJSONObject: legacy)).acknowledgedCommandID == nil)
+}
+
 @Test func rideMessagesRoundTripAndRejectStaleControls() throws {
     let now = Date()
     let id = UUID()

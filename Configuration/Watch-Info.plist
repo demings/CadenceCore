@@ -19,9 +19,9 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Measure your heart rate during indoor cycling workouts.</string>
+	<string>Measure heart rate and read Watch active and resting energy during indoor cycling workouts.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Save indoor cycling workouts with heart rate, energy, measured trainer power and cadence, and optional simulated speed and distance to Health.</string>
+	<string>Save indoor cycling workouts with heart rate, active and resting energy, measured trainer power and cadence, and optional simulated speed and distance to Health.</string>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKBackgroundModes</key>

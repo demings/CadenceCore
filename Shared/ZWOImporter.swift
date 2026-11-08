@@ -17,6 +17,8 @@ public enum ZWOImporter {
     public static let maximumFileBytes = 1_048_576
     public static let maximumIntervals = 2000
     public static let maximumDuration: Double = 21_600
+    public static let maximumCues = 1000
+    public static let maximumCueCharacters = 500
 
     public static func parse(_ data: Data) throws -> Workout {
         guard !data.isEmpty, data.count <= maximumFileBytes else {
@@ -42,7 +44,8 @@ public enum ZWOImporter {
         let name = delegate.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw WorkoutImportError.invalid("workout name is missing.") }
         return Workout(name: name, description: delegate.details.trimmingCharacters(in: .whitespacesAndNewlines),
-                       intervals: delegate.intervals, warnings: delegate.warnings)
+                       intervals: delegate.intervals, warnings: delegate.warnings,
+                       cues: delegate.cues.isEmpty ? nil : delegate.cues.sorted { $0.offset < $1.offset })
     }
 }
 
@@ -52,10 +55,13 @@ private final class WorkoutXMLDelegate: NSObject, XMLParserDelegate {
     var name = ""
     var details = ""
     var warnings: [String] = []
+    var cues: [WorkoutTextCue] = []
     var seenRoot = false
     var seenWorkout = false
     private var stack: [String] = []
     private var duration: Double = 0
+    private var blockStart: Double = 0
+    private var blockDuration: Double = 0
     private let blocks: Set<String> = ["SteadyState", "Warmup", "Cooldown", "Ramp", "IntervalsT"]
 
     private func reject(_ parser: XMLParser, _ reason: String) {
@@ -82,12 +88,14 @@ private final class WorkoutXMLDelegate: NSObject, XMLParserDelegate {
                 guard blocks.contains(elementName) else {
                     throw WorkoutImportError.invalid("unsupported executable block \(elementName).")
                 }
+                blockStart = duration
                 try addBlock(elementName, attributes: attributes)
+                blockDuration = duration - blockStart
             } else if let parent, blocks.contains(parent) {
                 guard elementName == "textevent" else {
                     throw WorkoutImportError.invalid("unsupported nested instruction \(elementName) in \(parent).")
                 }
-                warn("Workout text cues are not yet supported and will not be displayed during riding.")
+                try addCue(attributes)
             } else if stack.contains("workout") {
                 throw WorkoutImportError.invalid("unsupported nested workout element \(elementName).")
             } else if parent == "workout_file" {
@@ -103,6 +111,10 @@ private final class WorkoutXMLDelegate: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if stack.contains("workout") && !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reject(parser, "workout instructions must use supported elements and attributes, not text content.")
+            return
+        }
         if stack == ["workout_file", "name"] { name += string }
         if stack == ["workout_file", "description"] { details += string }
         if stack == ["workout_file", "sportType"] { sport += string }
@@ -144,6 +156,27 @@ private final class WorkoutXMLDelegate: NSObject, XMLParserDelegate {
     private func cadence(_ attributes: [String: String], _ key: String) throws -> Double? {
         guard attributes[key] != nil else { return nil }
         return try number(attributes, key, range: 1...250)
+    }
+
+    private func addCue(_ attributes: [String: String]) throws {
+        guard attributes.keys.allSatisfy({ ["timeoffset", "message", "duration"].contains($0) }) else {
+            throw WorkoutImportError.invalid("unsupported textevent attribute; text behavior was not guessed.")
+        }
+        let offset = try number(attributes, "timeoffset", range: 0...blockDuration)
+        guard offset < blockDuration else {
+            throw WorkoutImportError.invalid("textevent timeoffset must be inside its containing block.")
+        }
+        let displayDuration = attributes["duration"] == nil ? 5
+            : try number(attributes, "duration", range: 0.1...60)
+        let cue = WorkoutTextCue(offset: blockStart + offset,
+                                 message: attributes["message"] ?? "", duration: displayDuration)
+        guard cue.isValid else {
+            throw WorkoutImportError.invalid("textevent message must be nonempty, at most 500 characters, without control characters.")
+        }
+        guard cues.count < ZWOImporter.maximumCues else {
+            throw WorkoutImportError.invalid("workout exceeds 1000 text cues.")
+        }
+        cues.append(cue)
     }
 
     private func append(_ interval: WorkoutInterval) throws {

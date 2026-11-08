@@ -12,10 +12,12 @@ final class RideConfiguration {
     }
     private(set) var simulation: SimulationConfiguration?
     private(set) var simulationError: String?
+    let cadence: CadenceSettingsController
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        cadence = CadenceSettingsController(defaults: defaults)
         ftpText = defaults.string(forKey: "ftpWatts") ?? ""
         if let data = defaults.data(forKey: "simulationSettings") {
             do {
