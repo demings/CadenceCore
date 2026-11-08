@@ -30,6 +30,8 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     var testLength: DiagnosticSchedule.Length = .short
     private(set) var stopFlow = ReducedLoadStop()
     private(set) var stopStatus = "Reduced-load stop has not been requested."
+    private(set) var playback: WorkoutPlayback?
+    private(set) var playbackStatus = "No workout selected."
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -42,6 +44,108 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private var sequenceTarget: Int?
     private var activeTestLength: DiagnosticSchedule.Length = .short
     private var lastSequenceSampleTime: TimeInterval?
+    private var lastWorkoutLogTime: Double?
+    private var workoutWatchdog: Task<Void, Never>?
+
+    var workoutOwnsTrainer: Bool {
+        playback.map { $0.state != .completed } ?? false
+    }
+
+    func startWorkout(_ workout: Workout, ftp: Double) {
+        guard !workoutOwnsTrainer, !sequenceActive, connected, hasControl, !pending,
+              !stopFlow.isInProgress, let range = powerRange,
+              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
+            playbackStatus = "Connect and request trainer control in Diagnostics, with fresh telemetry and no active test."
+            record(playbackStatus)
+            return
+        }
+        do {
+            playback = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
+            lastWorkoutLogTime = nil
+            playbackStatus = "Setting initial target…"
+            record("Workout \(workout.name) starting with FTP snapshot \(ftp) W.")
+            if let command = playback?.begin() { perform(command) }
+        } catch {
+            playbackStatus = error.localizedDescription
+            record(playbackStatus)
+        }
+    }
+
+    func pauseWorkout() {
+        if let command = playback?.pause(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
+    }
+
+    func resumeWorkout() {
+        guard connected, hasControl, !pending, !stopFlow.isInProgress,
+              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
+            playbackStatus = "Resume blocked: reacquire control and wait for fresh telemetry."
+            record(playbackStatus)
+            return
+        }
+        guard let snapshot = playback, let range = powerRange,
+              range.minimum == snapshot.range.minimum,
+              range.maximum == snapshot.range.maximum,
+              range.increment == snapshot.range.increment else {
+            playbackStatus = "Resume blocked: trainer power range changed. Finish this workout before starting a new one."
+            record(playbackStatus)
+            return
+        }
+        if let command = playback?.begin() { perform(command) }
+    }
+
+    func finishWorkout() {
+        if let command = playback?.finish(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
+    }
+
+    private func perform(_ command: WorkoutPlayback.Command) {
+        switch command {
+        case .target(let watts):
+            stopFlow = ReducedLoadStop()
+            stopStatus = "Workout target active; reduced-load stop has not been requested."
+            playbackStatus = "Sending workout target \(watts) W…"
+            send(FTMS.targetPower(Int16(watts)))
+        case .start:
+            playbackStatus = "Starting trainer…"
+            send(Data([7]))
+        case .reducedLoadStop:
+            playbackStatus = [playback?.error, "Requesting reduced load…"].compactMap { $0 }.joined(separator: " ")
+            stopTrainer()
+        }
+    }
+
+    private func interruptWorkout(_ reason: String) {
+        guard workoutOwnsTrainer else { return }
+        playback?.interrupt(reason)
+        workoutWatchdog?.cancel()
+        playbackStatus = reason
+        record("Workout interrupted: \(reason)")
+    }
+
+    private func serviceWorkout() {
+        guard playback?.state == .running else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let command = playback?.service(now: now, commandPending: pending)
+        if let error = playback?.error { record("Workout interrupted: \(error)") }
+        if lastWorkoutLogTime.map({ now - $0 >= 15 }) ?? true {
+            lastWorkoutLogTime = now
+            record("Workout elapsed \(playback?.elapsed ?? 0) s, measured \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { "\($0) rpm" } ?? "unavailable").")
+        }
+        if let command { perform(command) }
+    }
+
+    private func monitorWorkoutTelemetry() {
+        workoutWatchdog?.cancel()
+        workoutWatchdog = Task { [weak self] in
+            while let self, self.playback?.state == .running {
+                do { try await Task.sleep(for: .seconds(1)) }
+                catch { return }
+                guard self.playback?.state == .running else { return }
+                if self.telemetryDate.map({ Date().timeIntervalSince($0) > 3 }) ?? true {
+                    self.serviceWorkout()
+                }
+            }
+        }
+    }
 
     override init() {
         super.init()
@@ -61,7 +165,8 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     var canRequestControl: Bool {
-        connected && controlSubscribed && powerSupported && powerRange != nil && !pending && !stopFlow.isInProgress
+        connected && controlSubscribed && powerSupported && powerRange != nil && !pending && !stopFlow.isInProgress &&
+            (!workoutOwnsTrainer || playback?.state == .interrupted)
     }
 
     func scan() {
@@ -91,7 +196,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func beginSequence() {
-        guard !sequenceActive, hasControl, trainerRunning, !pending, !stopFlow.isInProgress,
+        guard !workoutOwnsTrainer, !sequenceActive, hasControl, trainerRunning, !pending, !stopFlow.isInProgress,
               let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3, let range = powerRange,
               range.contains(0),
               (80...120).allSatisfy(range.contains) else {
@@ -128,7 +233,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func setTarget(_ watts: Int) {
-        guard !stopFlow.isInProgress, hasControl, let range = powerRange, range.contains(watts),
+        guard !workoutOwnsTrainer, !stopFlow.isInProgress, hasControl, let range = powerRange, range.contains(watts),
               let signed = Int16(exactly: watts) else {
             record("Target rejected: acquire control and use a supported power increment/range.")
             return
@@ -141,7 +246,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func startTrainer() {
-        guard hasControl, !stopFlow.isInProgress, !sequenceActive else {
+        guard !workoutOwnsTrainer, hasControl, !stopFlow.isInProgress, !sequenceActive else {
             record("Start rejected: acquire control and wait for the active diagnostic or stop flow to finish.")
             return
         }
@@ -149,6 +254,10 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func stopTrainer() {
+        if workoutOwnsTrainer, let state = playback?.state,
+           ![.pausing, .finishing, .interrupted].contains(state) {
+            _ = playback?.finish(now: ProcessInfo.processInfo.systemUptime)
+        }
         sequenceStart = nil
         sequenceActive = false
         guard !stopFlow.isInProgress else { return }
@@ -176,6 +285,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     private func failStop(_ reason: String) {
+        interruptWorkout("Reduced-load stop failed. \(reason)")
         stopFlow.fail()
         stopStatus = "Trainer state unconfirmed. \(reason)"
         record(stopStatus)
@@ -183,6 +293,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func disconnect() {
         guard let peripheral else { return }
+        interruptWorkout("Disconnect requested; workout frozen. The trainer may retain its last target.")
         record("Disconnect requested. The trainer may retain its last target; this is NOT a load release.")
         central?.cancelPeripheralConnection(peripheral)
     }
@@ -191,6 +302,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         guard !pending, connected, controlSubscribed, let peripheral, let controlPoint,
               let opcode = data.first else {
             record("Command not sent: control point unavailable or another command is pending.")
+            interruptWorkout("Trainer command could not be sent; state unconfirmed.")
             if stopFlow.isInProgress { failStop("Reduced-load stop command could not be sent.") }
             return
         }
@@ -203,6 +315,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             catch { return }
             guard let self, self.pendingOpcode == opcode else { return }
             self.clearPending()
+            self.interruptWorkout("Trainer command timed out; reacquire control before resuming.")
             self.hasControl = false
             self.trainerRunning = false
             self.sequenceStart = nil
@@ -255,6 +368,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             status = "Unknown Bluetooth state."
         }
         if central.state != .poweredOn {
+            interruptWorkout("Bluetooth unavailable; workout frozen and trainer state unconfirmed.")
             if stopFlow.state != .idle { failStop("Bluetooth is unavailable; load reduction cannot be confirmed.") }
             hasControl = false
             trainerRunning = false
@@ -287,6 +401,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        interruptWorkout("Trainer disconnected; workout frozen. Reconnect and resume explicitly.")
         if stopFlow.state != .idle { failStop("Connection ended; current trainer load cannot be confirmed.") }
         connected = false
         sequenceStart = nil
@@ -349,15 +464,29 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        if let error { record("Subscription failed: \(error.localizedDescription)"); return }
+        if let error {
+            if characteristic.uuid == CBUUID(string: "2AD9") {
+                interruptWorkout("Trainer control subscription failed: \(error.localizedDescription)")
+                hasControl = false
+            }
+            record("Subscription failed: \(error.localizedDescription)")
+            return
+        }
         if characteristic.uuid == CBUUID(string: "2AD9") {
             controlSubscribed = characteristic.isNotifying
+            if !controlSubscribed {
+                interruptWorkout("Trainer control indications were disabled; workout frozen.")
+                hasControl = false
+                if stopFlow.isInProgress { failStop("Control indications unavailable; reduced load is unconfirmed.") }
+                clearPending()
+            }
             record("FTMS control indications \(controlSubscribed ? "enabled" : "disabled").")
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
+            interruptWorkout("Trainer write failed: \(error.localizedDescription)")
             if stopFlow.isInProgress { failStop("Bluetooth write failed: \(error.localizedDescription)") }
             clearPending()
             hasControl = false
@@ -390,6 +519,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 cadence = sample.cadence
                 telemetryDate = Date()
                 serviceSequence()
+                serviceWorkout()
             case "2AD9":
                 let response = try FTMS.response(data)
                 guard response.opcode == pendingOpcode else {
@@ -408,9 +538,21 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                         } else if stopFlow.state == .completed {
                             stopStatus = "0 W and stop acknowledged. Reduced load requested—not zero resistance."
                             record(stopStatus)
+                            playback?.stopped()
+                            if let playback {
+                                playbackStatus = playback.error ?? "Workout \(playback.state.rawValue)."
+                            }
                         }
+                    } else if let command = playback?.acknowledged(
+                        opcode: response.opcode, now: ProcessInfo.processInfo.systemUptime
+                    ) {
+                        perform(command)
+                    } else if playback?.state == .running {
+                        playbackStatus = "Workout running."
+                        if response.opcode == 7 { monitorWorkoutTelemetry() }
                     }
                 } else {
+                    interruptWorkout("Trainer rejected command \(response.opcode), result \(response.result).")
                     if stopFlow.isInProgress { failStop("Trainer rejected opcode \(response.opcode), result \(response.result).") }
                     hasControl = false
                     trainerRunning = false
@@ -421,6 +563,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             default: break
             }
         } catch {
+            if characteristic.uuid == CBUUID(string: "2AD9") {
+                interruptWorkout("Malformed trainer response; state unconfirmed.")
+                clearPending()
+                hasControl = false
+                trainerRunning = false
+            }
             if characteristic.uuid == CBUUID(string: "2AD9"), stopFlow.isInProgress {
                 failStop("Malformed control response: \(error.localizedDescription)")
                 clearPending()

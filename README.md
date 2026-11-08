@@ -1,12 +1,16 @@
 # CadenceCore
 
-Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics and a basic workout library/preview**.
+Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, and iPhone ERG playback**.
 
-The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. The library/import/preview is implemented; **full workout playback, cadence guidance, Health saving, simulated speed/distance, and Strava export are not implemented yet**. Diagnostics establish the actual KICKR CORE 2 control and background behavior.
+The original app icon combines a teal **C** with a power/heart-rate pulse on a dark background. Matching opaque 1024-pixel icons are included in the iPhone and Watch asset catalogs; the operating system applies its own rounded or circular mask.
+
+The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview and iPhone workout execution are implemented; **Watch workout controls, cadence guidance, Health saving, history/recovery, simulated speed/distance, and Strava export are not implemented yet**. Diagnostics establish the actual KICKR CORE 2 control and background behavior; general playback still needs actual-device acceptance.
 
 ## Workout library
 
-The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Enter your FTP (1–2000 W) to see interval watt targets alongside % FTP, a power-profile chart, and a full interval-list alternative. This is a preview, not a Start-workout screen; trainer diagnostics remain in their separate tab.
+The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Enter your FTP (1–2000 W) to see interval watt targets alongside % FTP, a power-profile chart, and a full interval-list alternative. Open a workout to review warnings and start ERG playback; trainer setup and diagnostics remain in their separate tab.
+
+The FTP number pad has a **Done** button to dismiss it; scrolling also dismisses it interactively. Importing or adding an example closes the keyboard without changing the entered FTP.
 
 Supported UTF-8 cycling ZWO blocks:
 
@@ -17,6 +21,21 @@ Supported UTF-8 cycling ZWO blocks:
 Power values are fractions of FTP, from 0 to 3. Durations must be 0.1 seconds or greater. Limits: 1 MiB input, six hours expanded duration, 2000 expanded intervals, 1000 repetitions per block, 16 XML nesting levels, cadence 1–250 rpm. DTD/entity declarations, non-cycling sports, unsupported executable blocks and behavior-changing attributes are rejected explicitly. Metadata is retained for name/description; unknown top-level metadata produces warnings. Text cues and unsupported cadence attributes currently generate visible preview warnings rather than being silently interpreted.
 
 Imports retain their original source bytes locally. Import/persistence errors are visible and failed mutations roll back. No in-app interval editor or calendar is included.
+
+## iPhone ERG playback
+
+1. Close other trainer-controlling apps. In **Diagnostics**, connect to KICKR and **Request FTMS control**. Wait for fresh telemetry; do not arm a diagnostic test.
+2. Set FTP, open an imported workout in **Workouts**, review its profile/warnings, and confirm **Start ERG workout**. The player validates the loaded interval values and trainer range before sending any workout command.
+3. The initial target must be acknowledged before start is sent; timing begins only after start is acknowledged. Workouts use an immutable name/interval/FTP snapshot, so library edits do not alter an active ride. Targets are rounded to supported trainer increments without exceeding the supported range.
+4. The live ride shows active time, interval/remaining time, scheduled power, actual measured power/cadence, and fresh mirrored Watch HR when a separate diagnostic HR session is running. **Scheduled target** is the interval plan, not a claim about actual applied resistance during pause/finish.
+5. **Pause and reduce load** freezes active time and queues the acknowledged 0 W then stop sequence behind any pending command. Resume is enabled after that sequence completes, requires fresh telemetry/control and the same trainer power range, restores the scheduled target, then starts. Paused and start-handshake time are excluded.
+6. Automatic completion and confirmed **Finish workout** request the same reduced-load sequence. The player does not claim completion until both acknowledgments arrive. **Current ride** in the library lets you return to controls after navigating away.
+
+Diagnostic target/start/test controls are blocked while the player owns the trainer, including while paused/interrupted. The explicit diagnostic reduced-load stop remains available and finishes the active workout. Disconnect, rejection, malformed control response, write failure, or timeout freezes playback with a visible reason. A gap longer than three seconds between serviced telemetry callbacks also freezes the last confirmed active time and requests reduced load when control is available; it does not silently skip intervals or auto-resume. A best-effort watchdog checks stale telemetry while the app is scheduled; it is not a background execution guarantee or hardware safety interlock. BLE telemetry callbacks own progression, not the UI refresh timer.
+
+After an interruption, reconnect/reacquire control as necessary and resume explicitly, or retry finish. **Force-quit/relaunch loses ride progress and may leave the last target on the trainer.** The user reports workout playback, pause, resume, and finish work on the actual KICKR. This establishes basic functional acceptance, not measured ramp/boundary timing, automatic completion, long-duration continuity, or interruption recovery. Locked-screen general playback remains unverified; the earlier locked-screen test covered the diagnostic schedule only.
+
+This milestone does **not** create a saved ride, Health/Fitness workout, or export. Watch HR diagnostics must still be started and ended separately on Watch and are discarded. Watch-first coordinated controls/recording are the next integration, not an invitation to run Apple's Workout app simultaneously.
 
 ## What this build does
 
@@ -31,7 +50,7 @@ Imports retain their original source bytes locally. Import/persistence errors ar
 - Shows missing/stale trainer measurements after three seconds and HR after ten seconds.
 - Saves a bounded, millisecond-timestamped diagnostic log locally, restores it at launch, and exports it using the share sheet. During the background test, measured power/cadence are logged every 15 seconds with monotonic elapsed time. Log files are writable after the first device unlock, including while subsequently locked. No heart-rate samples are written to that log.
 
-Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. No full workout playback, cadence coaching, history recording, or Strava integration is available yet.
+Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Cadence coaching, history recording, coordinated Watch playback controls, and Strava integration are not available yet.
 
 ## Build
 

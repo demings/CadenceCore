@@ -11,7 +11,7 @@ struct CadenceCoreApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                NavigationStack { WorkoutLibraryView() }
+                NavigationStack { WorkoutLibraryView(trainer: trainer, watch: watch) }
                     .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
                 NavigationStack { DiagnosticView(trainer: trainer, watch: watch) }
                     .tabItem { Label("Diagnostics", systemImage: "wrench.and.screwdriver") }
@@ -22,16 +22,22 @@ struct CadenceCoreApp: App {
     }
 
     struct WorkoutLibraryView: View {
+        @Bindable var trainer: TrainerDiagnostic
+        @Bindable var watch: WatchMirror
         @Environment(\.modelContext) private var context
         @Query(sort: \SavedWorkout.createdAt, order: .reverse) private var workouts: [SavedWorkout]
         @AppStorage("ftpWatts") private var ftp = ""
         @State private var importing = false
         @State private var errorMessage: String?
+        @FocusState private var ftpFocused: Bool
 
         var body: some View {
             List {
                 Section("Your FTP") {
-                    TextField("FTP in watts", text: $ftp).keyboardType(.numberPad)
+                    TextField("FTP in watts", text: $ftp)
+                        .keyboardType(.numberPad)
+                        .focused($ftpFocused)
+                        .accessibilityLabel("Functional threshold power in watts")
                     if let value = Double(ftp), value.isFinite, (1...2000).contains(value) {
                         Text("Preview targets use \(Int(value)) W FTP.").font(.caption)
                     } else {
@@ -40,10 +46,21 @@ struct CadenceCoreApp: App {
                     }
                 }
                 Section {
-                    Text("Import and preview workouts. Full ERG playback is not available yet; use Diagnostics for the hardware test.")
+                    Text("Connect and request trainer control in Diagnostics, then open a workout to start ERG playback. This build does not save rides to Health or history yet.")
                         .font(.footnote)
-                    Button("Import ZWO", systemImage: "square.and.arrow.down") { importing = true }
-                    Button("Add original example", systemImage: "plus") { save(.sample, source: nil) }
+                    Button("Import ZWO", systemImage: "square.and.arrow.down") {
+                        ftpFocused = false
+                        importing = true
+                    }
+                    Button("Add original example", systemImage: "plus") {
+                        ftpFocused = false
+                        save(.sample, source: nil)
+                    }
+                }
+                if trainer.playback != nil {
+                    Section("Current ride") {
+                        NavigationLink("Open ride controls") { RideView(trainer: trainer, watch: watch) }
+                    }
                 }
                 Section("Library") {
                     if workouts.isEmpty {
@@ -52,7 +69,7 @@ struct CadenceCoreApp: App {
                     }
                     ForEach(workouts) { saved in
                         NavigationLink {
-                            WorkoutPreviewView(saved: saved, ftpText: ftp)
+                            WorkoutPreviewView(saved: saved, ftpText: ftp, trainer: trainer, watch: watch)
                         } label: {
                             HStack {
                                 if saved.favorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
@@ -81,7 +98,17 @@ struct CadenceCoreApp: App {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Workouts")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    if ftpFocused {
+                        Spacer()
+                        Button("Done") { ftpFocused = false }
+                            .accessibilityHint("Dismisses the keyboard")
+                    }
+                }
+            }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
                 do {
                     let url = try result.get()
@@ -131,11 +158,15 @@ struct CadenceCoreApp: App {
     struct WorkoutPreviewView: View {
         @Bindable var saved: SavedWorkout
         let ftpText: String
+        @Bindable var trainer: TrainerDiagnostic
+        @Bindable var watch: WatchMirror
         @Environment(\.modelContext) private var context
         @State private var workout: Workout?
         @State private var errorMessage: String?
         @State private var editingName = ""
         @State private var renaming = false
+        @State private var confirmStart = false
+        @State private var showingRide = false
 
         private var ftp: Double? {
             guard let value = Double(ftpText), value.isFinite, (1...2000).contains(value) else { return nil }
@@ -166,8 +197,15 @@ struct CadenceCoreApp: App {
                     Section {
                         Text(workout.description)
                         LabeledContent("Duration", value: "\(Int(workout.duration / 60)) min \(Int(workout.duration) % 60) sec")
-                        Text("Preview only—Start workout will be added after the workout engine is implemented.")
+                        Text("ERG playback uses a fixed FTP snapshot. This build does not save rides to Health or history.")
                             .font(.footnote)
+                        Button("Start ERG workout", systemImage: "play.fill") { confirmStart = true }
+                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || trainer.stopFlow.isInProgress)
+                        if !trainer.hasControl {
+                            Text("Connect and request control in the Diagnostics tab first.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        Text(trainer.playbackStatus).font(.caption)
                     }
                     Section("Workout profile (% FTP)") {
                         Chart(profile(workout)) { point in
@@ -202,9 +240,21 @@ struct CadenceCoreApp: App {
                 }
             }
             .navigationTitle(saved.name)
+            .navigationDestination(isPresented: $showingRide) { RideView(trainer: trainer, watch: watch) }
+            .confirmationDialog("Start this ERG workout?", isPresented: $confirmStart, titleVisibility: .visible) {
+                Button("Start workout") {
+                    guard var workout, let ftp else { return }
+                    workout.name = saved.name
+                    trainer.startWorkout(workout, ftp: ftp)
+                    showingRide = trainer.workoutOwnsTrainer
+                }
+            } message: {
+                Text("Trainer resistance follows the imported intervals. Pause/finish requests reduced load, not zero resistance. Review import warnings first. Watch controls and Health recording are not connected to playback yet.")
+            }
             .toolbar {
                 Button("Rename") { editingName = saved.name; renaming = true }
             }
+
             .task {
                 do { workout = try JSONDecoder().decode(Workout.self, from: saved.encodedWorkout) }
                 catch { errorMessage = error.localizedDescription }
@@ -227,6 +277,73 @@ struct CadenceCoreApp: App {
     }
 }
 
+struct RideView: View {
+    @Bindable var trainer: TrainerDiagnostic
+    @Bindable var watch: WatchMirror
+    @State private var confirmFinish = false
+
+    var body: some View {
+        List {
+            if let playback = trainer.playback {
+                Section {
+                    Text(playback.workout.name).font(.title2.bold())
+                    Text(trainer.playbackStatus)
+                    LabeledContent("Workout state", value: playback.state.title)
+                    LabeledContent("Active time", value: "\(Int(playback.elapsed) / 60):\(String(format: "%02d", Int(playback.elapsed) % 60))")
+                    if let position = playback.position {
+                        LabeledContent("Interval", value: "\(position.index + 1) of \(playback.workout.intervals.count)")
+                        LabeledContent("Interval remaining", value: "\(Int(ceil(position.remaining))) sec")
+                        LabeledContent("Scheduled target", value: "\(position.targetWatts) W")
+                        if let cadence = position.cadence {
+                            LabeledContent("Workout cadence", value: "\(Int(cadence)) rpm")
+                        }
+                    }
+                    LabeledContent("FTP snapshot", value: "\(Int(playback.ftp)) W")
+                }
+                Section("Live measurements") {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let fresh = trainer.telemetryDate.map { context.date.timeIntervalSince($0) <= 3 } ?? false
+                        LabeledContent("Measured power", value: fresh ? trainer.power.map { "\($0) W" } ?? "Unavailable" : "Unavailable / stale")
+                        LabeledContent("Cadence", value: fresh ? trainer.cadence.map { "\(Int($0.rounded())) rpm" } ?? "Unavailable" : "Unavailable / stale")
+                        let hrFresh = watch.receivedAt.map { context.date.timeIntervalSince($0) <= 10 } ?? false
+                        LabeledContent("Heart rate", value: hrFresh ? watch.heartRate.map { "\(Int($0.rounded())) bpm" } ?? "Unavailable" : "Unavailable / stale")
+                    }
+                }
+                Section("Ride controls") {
+                    if playback.state == .running {
+                        Button("Pause and reduce load", systemImage: "pause.fill") { trainer.pauseWorkout() }
+                            .frame(minHeight: 44)
+                    }
+                    if [.paused, .interrupted].contains(playback.state), playback.position != nil {
+                        Button("Resume workout", systemImage: "play.fill") { trainer.resumeWorkout() }
+                            .disabled(trainer.pending || trainer.stopFlow.isInProgress || !trainer.hasControl)
+                            .frame(minHeight: 44)
+                        if !trainer.hasControl {
+                            Text("Reconnect and request control in Diagnostics, then resume explicitly.")
+                                .font(.footnote)
+                        }
+                    }
+                    if playback.state != .completed {
+                        Button("Finish workout", role: .destructive) { confirmFinish = true }
+                            .disabled(playback.state == .finishing)
+                            .frame(minHeight: 44)
+                    }
+                    Text(trainer.stopStatus).font(.footnote)
+                    Text("No Health/history save yet. A Watch HR diagnostic runs separately and must be ended on Watch. Force-quitting can leave the trainer's last target active.")
+                        .font(.footnote)
+                }
+            }
+        }
+        .monospacedDigit()
+        .navigationTitle("Ride")
+        .confirmationDialog("Finish and request reduced load?", isPresented: $confirmFinish, titleVisibility: .visible) {
+            Button("Finish workout", role: .destructive) { trainer.finishWorkout() }
+        } message: {
+            Text("Progression ends and the app requests 0 W followed by stop. This does not guarantee zero resistance.")
+        }
+    }
+}
+
 struct DiagnosticView: View {
     @Bindable var trainer: TrainerDiagnostic
     @Bindable var watch: WatchMirror
@@ -238,7 +355,7 @@ struct DiagnosticView: View {
         List {
             Section {
                 Label("Hardware feasibility • Diagnostic build", systemImage: "wrench.and.screwdriver")
-                Text("This is not yet a workout player. Reduced-load stop requests 0 W before FTMS stop. Neither acknowledgment nor disconnect guarantees zero resistance.")
+                Text("Use Workouts for ERG playback. Reduced-load stop requests 0 W before FTMS stop. Neither acknowledgment nor disconnect guarantees zero resistance.")
                     .font(.footnote)
             }
             Section("Trainer") {
@@ -261,10 +378,11 @@ struct DiagnosticView: View {
                             .font(.caption)
                     }
                     Stepper("Diagnostic target: \(watts) W", value: $watts, in: 0...400, step: 5)
+                        .disabled(trainer.workoutOwnsTrainer)
                     Button("Send target power") { confirmTarget = true }
-                        .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending || !(trainer.powerRange?.contains(watts) ?? false))
+                        .disabled(trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending || !(trainer.powerRange?.contains(watts) ?? false))
                     Button("Send start / resume") { trainer.startTrainer() }
-                        .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending)
+                        .disabled(trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending)
                     Button("Reduce load to 0 W and stop", role: .destructive) { trainer.stopTrainer() }
                         .disabled(trainer.stopFlow.isInProgress || !trainer.hasControl)
                     Text(trainer.stopStatus)
@@ -275,11 +393,15 @@ struct DiagnosticView: View {
                             Text("\(length.rawValue) minutes").tag(length)
                         }
                     }
-                    .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress)
+                    .disabled(trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.stopFlow.isInProgress)
                     Button(trainer.sequenceActive ? "Diagnostic running" : "Arm \(trainer.testLength.rawValue)-minute background test") {
                         confirmSequence = true
                     }
-                    .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || !trainer.trainerRunning || trainer.pending)
+                    .disabled(trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || !trainer.trainerRunning || trainer.pending)
+                    if trainer.workoutOwnsTrainer {
+                        Text("Workout playback owns the trainer. Use ride controls in Workouts; reduced-load stop remains available here.")
+                            .font(.footnote)
+                    }
                     Button("Disconnect (does not release load)", role: .destructive) { trainer.disconnect() }
                 }
             }

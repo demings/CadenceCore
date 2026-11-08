@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000022; };
+		CC0000000000000000000011 /* iPhone assets in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000013; };
+		CC0000000000000000000012 /* Watch assets in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000014; };
 		CC0000000000000000000001 /* Workout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000003 /* Workout.swift */; };
 		CC0000000000000000000002 /* ZWOImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000004 /* ZWOImporter.swift */; };
 		09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591285974FAF0BE679956250 /* CadenceCoreApp.swift */; };
@@ -43,6 +46,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000022 /* WorkoutPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPlayback.swift; sourceTree = "<group>"; };
+		CC0000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CC0000000000000000000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CC0000000000000000000003 /* Workout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workout.swift; sourceTree = "<group>"; };
 		CC0000000000000000000004 /* ZWOImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZWOImporter.swift; sourceTree = "<group>"; };
 		020DF8EAE92CA3EEC350443D /* FTMS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTMS.swift; sourceTree = "<group>"; };
@@ -68,6 +74,7 @@
 		D0A083AD47BB1AA36F285C91 /* Watch */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000014 /* Assets.xcassets */,
 				BC7AE1EBBABD95FD5140DED5 /* CadenceCoreWatchApp.swift */,
 			);
 			path = Watch;
@@ -76,6 +83,7 @@
 		E52A643E803AE0A09C13FD73 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000022 /* WorkoutPlayback.swift */,
 				CC0000000000000000000003 /* Workout.swift */,
 				CC0000000000000000000004 /* ZWOImporter.swift */,
 				61973293AC42E239ADE7F8E5 /* DiagnosticSchedule.swift */,
@@ -97,6 +105,7 @@
 		EEEED3DDED4A2D53FE7FC89E /* iPhone */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000013 /* Assets.xcassets */,
 				591285974FAF0BE679956250 /* CadenceCoreApp.swift */,
 				2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */,
 				8AA486D0F269A24C5FB4D98F /* WatchMirror.swift */,
@@ -112,6 +121,7 @@
 			buildConfigurationList = A133416944F4A35ABC7391BB /* Build configuration list for PBXNativeTarget "CadenceCore" */;
 			buildPhases = (
 				B0BFE9444A6CE32A25B63155 /* Sources */,
+				CC0000000000000000000015 /* Resources */,
 				EAA66145E2E846EA5E954E41 /* Embed Watch Content */,
 			);
 			buildRules = (
@@ -131,6 +141,7 @@
 			buildConfigurationList = A330556CC77DE44249842806 /* Build configuration list for PBXNativeTarget "CadenceCoreWatch" */;
 			buildPhases = (
 				C932B88DAD9724558475F9D0 /* Sources */,
+				CC0000000000000000000016 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -144,6 +155,21 @@
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CC0000000000000000000015 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (CC0000000000000000000011, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC0000000000000000000016 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (CC0000000000000000000012, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXProject section */
 		9D01DFC24389CE8051DD9DD2 /* Project object */ = {
@@ -185,6 +211,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */,
 				CC0000000000000000000001 /* Workout.swift in Sources */,
 				CC0000000000000000000002 /* ZWOImporter.swift in Sources */,
 				09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */,
