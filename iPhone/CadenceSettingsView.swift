@@ -40,6 +40,7 @@ public final class CadenceSettingsController {
 }
 
 public struct CadenceSettingsView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable private var controller: CadenceSettingsController
     @State private var enabled = true
     @State private var haptics = false
@@ -57,31 +58,47 @@ public struct CadenceSettingsView: View {
             Section {
                 Toggle("Cadence guidance", isOn: $enabled)
                 Toggle("Gentle Watch cadence haptics", isOn: $haptics)
-                Text("Advisory suggestions, not an optimal cadence or a power-control instruction. Never force a cadence; ERG watts are unchanged.")
-                    .font(.footnote)
-                Text("Workout cadence targets take priority, including low-cadence drills. Single-rpm targets use ±5 rpm feedback tolerance.")
-                    .font(.footnote)
+                Text(
+                    "Advisory suggestions, not an optimal cadence or a power-control instruction. Never force a cadence; ERG watts are unchanged."
+                )
+                .font(.footnote)
+                Text(
+                    "Workout cadence targets take priority, including low-cadence drills. Single-rpm targets use ±5 rpm feedback tolerance."
+                )
+                .font(.footnote)
                 if let issue = controller.persistenceError { Text(issue).foregroundStyle(.red) }
             }
             Section("Suggested ranges by commanded target / FTP") {
                 range("Up to 75% FTP", indices: 0...1)
                 range("Above 75%, up to 100% FTP", indices: 2...3)
                 range("Above 100% FTP", indices: 4...5)
-                Text("Positive lower and upper values, lower below upper, maximum 250 rpm. Broad editable heuristics, not a physiological optimum.")
-                    .font(.footnote)
+                Text(
+                    "Positive lower and upper values, lower below upper, maximum 250 rpm. Broad editable heuristics, not a physiological optimum."
+                )
+                .font(.footnote)
             }
             Section("Feedback timing") {
-                Text("Cadence is smoothed over three seconds. Ten-second grace after start, resume, interval or recommendation changes. Haptics require ten continuous seconds outside the range, at most once every 30 seconds. Two-rpm recovery hysteresis reduces flicker.")
-                Text("Missing/stale cadence, pauses, disconnection and stopped pedaling suppress guidance. Haptics are off by default.")
+                DisclosureGroup("How feedback works") {
+                    Text(
+                        "Cadence is smoothed over three seconds. Ten-second grace after start, resume, interval or recommendation changes. Haptics require ten continuous seconds outside the range, at most once every 30 seconds. Two-rpm recovery hysteresis reduces flicker."
+                    )
+                    Text("Missing/stale cadence, pauses, disconnection and stopped pedaling suppress guidance. Haptics are off by default.")
+                }.font(.footnote)
             }
             Section {
                 Button("Save cadence settings") { save() }
                 Button("Restore defaults") {
-                    do { try controller.restoreDefaults(); load(); saved = true }
-                    catch { self.error = error.localizedDescription }
+                    do {
+                        try controller.restoreDefaults()
+                        load()
+                        saved = true
+                    } catch { self.error = error.localizedDescription }
                 }
-                Text(saved ? "Saved. Applies when preparing the next ride." : "Changes apply to the next ride, not the current ride snapshot.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Text(
+                    saved
+                        ? "Saved. Applies when preparing the next ride." : "Changes apply to the next ride, not the current ride snapshot."
+                )
+                .font(.footnote).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Cadence guidance")
@@ -96,48 +113,76 @@ public struct CadenceSettingsView: View {
                 Button("Done") { focused = false }
             }
         }
-        .alert("Cadence settings", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK") { error = nil } } message: { Text(error ?? "") }
+        .alert(
+            "Cadence settings",
+            isPresented: Binding(
+                get: { error != nil }, set: { if !$0 { error = nil } }
+            )
+        ) {
+            Button("OK") { error = nil }
+        } message: {
+            Text(error ?? "")
+        }
     }
 
     private func range(_ title: String, indices: ClosedRange<Int>) -> some View {
         VStack(alignment: .leading) {
             Text(title).font(.caption)
-            HStack {
-                TextField("Lower rpm", text: $values[indices.lowerBound])
-                    .accessibilityLabel("\(title) lower rpm")
-                Text("–")
-                TextField("Upper rpm", text: $values[indices.upperBound])
-                    .accessibilityLabel("\(title) upper rpm")
-                Text("rpm")
+            if dynamicTypeSize.isAccessibilitySize {
+                Text("Lower rpm").font(.caption)
+                field(title, index: indices.lowerBound, lower: true)
+                Text("Upper rpm").font(.caption)
+                field(title, index: indices.upperBound, lower: false)
+            } else {
+                HStack {
+                    field(title, index: indices.lowerBound, lower: true)
+                    Text("–")
+                    field(title, index: indices.upperBound, lower: false)
+                    Text("rpm")
+                }
             }
+        }
+    }
+
+    private func field(_ title: String, index: Int, lower: Bool) -> some View {
+        TextField(lower ? "Lower rpm" : "Upper rpm", text: $values[index])
+            .accessibilityLabel("\(title) \(lower ? "lower" : "upper") rpm")
+            .accessibilityIdentifier("\(title) \(lower ? "lower" : "upper") rpm")
+            .textFieldStyle(.roundedBorder)
+            .frame(minHeight: 44)
             .keyboardType(.decimalPad)
             .focused($focused)
-        }
     }
 
     private func load() {
         let configuration = controller.configuration
         enabled = configuration.enabled
         haptics = configuration.hapticsEnabled
-        values = [configuration.easy.lower, configuration.easy.upper,
-                  configuration.moderate.lower, configuration.moderate.upper,
-                  configuration.hard.lower, configuration.hard.upper].map { String($0) }
+        values = [
+            configuration.easy.lower, configuration.easy.upper,
+            configuration.moderate.lower, configuration.moderate.upper,
+            configuration.hard.lower, configuration.hard.upper,
+        ].map { String($0) }
     }
 
     private func save() {
         focused = false
         let numbers = values.compactMap {
-            Double($0.trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: Locale.current.decimalSeparator ?? ".", with: "."))
+            Double(
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: Locale.current.decimalSeparator ?? ".", with: "."))
         }
-        guard numbers.count == 6 else { error = "Enter all six rpm values."; return }
+        guard numbers.count == 6 else {
+            error = "Enter all six rpm values."
+            return
+        }
         do {
-            try controller.save(.init(enabled: enabled, hapticsEnabled: haptics,
-                easy: .init(lower: numbers[0], upper: numbers[1]),
-                moderate: .init(lower: numbers[2], upper: numbers[3]),
-                hard: .init(lower: numbers[4], upper: numbers[5])))
+            try controller.save(
+                .init(
+                    enabled: enabled, hapticsEnabled: haptics,
+                    easy: .init(lower: numbers[0], upper: numbers[1]),
+                    moderate: .init(lower: numbers[2], upper: numbers[3]),
+                    hard: .init(lower: numbers[4], upper: numbers[5])))
             saved = true
         } catch { self.error = error.localizedDescription }
     }

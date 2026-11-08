@@ -225,6 +225,30 @@ public struct RideArchive: Codable, Sendable, Identifiable {
         recordingMetrics = metrics
     }
 
+    /// Recording completion does not confirm trainer stop; the live coordinator retains safety ownership.
+    public mutating func concludeRecording(
+        receipt: RideHealthReceipt, at date: Date,
+        metrics: RecordingMetrics? = nil, lastConfirmedDistance: Double? = nil
+    ) throws {
+        guard recordingMode == .watch, receipt.status != .pending, date.timeIntervalSince1970.isFinite,
+            lastConfirmedDistance.map({ $0.isFinite && $0 >= 0 }) ?? true
+        else {
+            throw RideArchiveError.invalid("Terminal recording receipt.")
+        }
+        var candidate = self
+        try candidate.setHealthReceipt(receipt)
+        if let metrics { try candidate.setRecordingMetrics(metrics) }
+        if candidate.isRecoverable {
+            let end = max(date, max(candidate.events.last?.date ?? startedAt, candidate.samples.last?.date ?? startedAt))
+            let distance = [candidate.simulatedDistance, lastConfirmedDistance].compactMap { $0 }.max()
+            try candidate.append(
+                event: .init(
+                    state: .finished, date: end, activeElapsed: candidate.activeDuration,
+                    intensity: candidate.currentIntensity, simulatedDistance: distance))
+        }
+        self = candidate
+    }
+
     public func validate() throws {
         func valid(_ value: Double?, _ range: ClosedRange<Double>) -> Bool {
             value.map { $0.isFinite && range.contains($0) } ?? true
@@ -246,11 +270,12 @@ public struct RideArchive: Codable, Sendable, Identifiable {
             throw RideArchiveError.invalid("Metadata, size, or recording receipt.")
         }
         var previousEvent: RideArchiveEvent?
+        var previousEventDistance: Double?
         var eventIDs = Set<UUID>()
         for event in events {
             guard eventIDs.insert(event.id).inserted,
                 valid(event.date.timeIntervalSince1970, 0...253_402_300_799),
-                event.date >= startedAt, valid(event.activeElapsed, 0...21600),
+                event.date >= startedAt, valid(event.activeElapsed, 0...workout.duration),
                 valid(event.intensity, 0.5...1.5), valid(event.simulatedDistance, 0...4_320_000),
                 simulation != nil || event.simulatedDistance == nil,
                 event.activeElapsed <= event.date.timeIntervalSince(startedAt) + 1,
@@ -263,6 +288,12 @@ public struct RideArchive: Codable, Sendable, Identifiable {
                 throw RideArchiveError.invalid("Event timeline.")
             }
             previousEvent = event
+            if let distance = event.simulatedDistance {
+                guard previousEventDistance.map({ distance >= $0 }) ?? true else {
+                    throw RideArchiveError.invalid("Event distance must not decrease.")
+                }
+                previousEventDistance = distance
+            }
         }
         guard endedAt == (events.last?.state == .finished ? events.last?.date : nil) else {
             throw RideArchiveError.invalid("Completion timestamp.")
@@ -278,7 +309,7 @@ public struct RideArchive: Codable, Sendable, Identifiable {
             guard sampleIDs.insert(sample.id).inserted,
                 valid(sample.date.timeIntervalSince1970, 0...253_402_300_799),
                 sample.date >= startedAt, endedAt.map({ sample.date <= $0 }) ?? true,
-                valid(sample.activeElapsed, 0...21600),
+                valid(sample.activeElapsed, 0...workout.duration),
                 sample.activeElapsed <= sample.date.timeIntervalSince(startedAt) + 1,
                 sample.power.map({ (-32768...32767).contains($0) }) ?? true,
                 valid(sample.cadence, 0...1000), valid(sample.heartRate, 1...300),

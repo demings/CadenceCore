@@ -1,13 +1,15 @@
 import Foundation
 import Testing
+
 @testable import TrainerProtocol
 
 private let archiveStart = Date(timeIntervalSince1970: 1_700_000_000)
 
 private func archiveFixture(id: UUID = UUID()) throws -> RideArchive {
-    var ride = try RideArchive(id: id, workout: .sample, ftp: 250,
-                               simulation: .init(riderMass: 75),
-                               trainer: .init(id: UUID(), name: "Trainer"), startedAt: archiveStart)
+    var ride = try RideArchive(
+        id: id, workout: .sample, ftp: 250,
+        simulation: .init(riderMass: 75),
+        trainer: .init(id: UUID(), name: "Trainer"), startedAt: archiveStart)
     try ride.append(event: .init(state: .running, date: archiveStart, activeElapsed: 0))
     return ride
 }
@@ -19,14 +21,69 @@ private func archiveTestDirectory() throws -> URL {
     return url
 }
 
+@Test func terminalWatchReceiptsCloseInterruptedRecordingWithoutGapTimeOrDuplicateFinish() throws {
+    let directory = try archiveTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = RideArchiveRepository(directory: directory)
+    try repository.load()
+    for status in [RideHealthReceipt.Status.saved, .failed, .unavailable] {
+        var ride = try archiveFixture()
+        try ride.append(
+            sample: .init(
+                date: archiveStart.addingTimeInterval(2), activeElapsed: 2,
+                power: 200, simulatedDistance: 10))
+        try ride.append(event: .init(state: .interrupted, date: archiveStart.addingTimeInterval(3), activeElapsed: 2))
+        let receipt = RideHealthReceipt(
+            status: status, workoutID: status == .saved ? UUID() : nil,
+            detail: "Trainer stop unconfirmed.")
+        try ride.concludeRecording(
+            receipt: receipt, at: archiveStart.addingTimeInterval(100),
+            metrics: .init(
+                averageHeartRate: nil, maximumHeartRate: nil,
+                activeKilocalories: 2, restingKilocalories: nil), lastConfirmedDistance: 12)
+        #expect(!ride.isRecoverable)
+        #expect(ride.activeDuration == 2)
+        #expect(ride.simulatedDistance == 12)
+        #expect(ride.recordingMetrics?.activeKilocalories == 2)
+        #expect(ride.events.last?.state == .finished)
+        let events = ride.events
+        try ride.concludeRecording(receipt: receipt, at: archiveStart.addingTimeInterval(200))
+        #expect(ride.events == events)
+        try repository.save(ride)
+    }
+    let restarted = RideArchiveRepository(directory: directory)
+    try restarted.load()
+    #expect(restarted.rides.count == 3)
+    #expect(restarted.rides.allSatisfy { !$0.isRecoverable && $0.activeDuration == 2 })
+}
+
+@Test func terminalWatchReceiptRejectsInvalidDataWithoutPartialMutation() throws {
+    var ride = try archiveFixture()
+    let pending = ride.healthReceipt
+    #expect(throws: RideArchiveError.self) {
+        try ride.concludeRecording(receipt: .init(status: .failed), at: archiveStart, lastConfirmedDistance: .nan)
+    }
+    #expect(throws: RideArchiveError.self) {
+        try ride.concludeRecording(receipt: .init(status: .pending), at: archiveStart)
+    }
+    #expect(ride.healthReceipt == pending)
+    #expect(ride.isRecoverable)
+}
+
 @Test func archivePausedIntensityAndFinalDistanceSurviveWithoutExtraTelemetry() throws {
     var ride = try archiveFixture()
-    try ride.append(sample: .init(date: archiveStart.addingTimeInterval(1), activeElapsed: 1,
-        power: 200, simulatedDistance: 10))
-    try ride.append(event: .init(state: .paused, date: archiveStart.addingTimeInterval(2), activeElapsed: 2,
-        intensity: 1, simulatedDistance: 12))
-    try ride.append(event: .init(state: .paused, date: archiveStart.addingTimeInterval(3), activeElapsed: 2,
-        intensity: 1.2, simulatedDistance: 12))
+    try ride.append(
+        sample: .init(
+            date: archiveStart.addingTimeInterval(1), activeElapsed: 1,
+            power: 200, simulatedDistance: 10))
+    try ride.append(
+        event: .init(
+            state: .paused, date: archiveStart.addingTimeInterval(2), activeElapsed: 2,
+            intensity: 1, simulatedDistance: 12))
+    try ride.append(
+        event: .init(
+            state: .paused, date: archiveStart.addingTimeInterval(3), activeElapsed: 2,
+            intensity: 1.2, simulatedDistance: 12))
     let restored = try JSONDecoder().decode(RideArchive.self, from: JSONEncoder().encode(ride))
     try restored.validate()
     #expect(restored.currentIntensity == 1.2)
@@ -36,12 +93,16 @@ private func archiveTestDirectory() throws -> URL {
 
 @Test func archiveRetainsOriginalFreshHeartRateTimestampAndRejectsStaleAlignment() throws {
     var ride = try archiveFixture()
-    try ride.append(sample: .init(date: archiveStart.addingTimeInterval(2), activeElapsed: 2,
-        power: 200, heartRate: 120, heartRateSampleDate: archiveStart.addingTimeInterval(1)))
+    try ride.append(
+        sample: .init(
+            date: archiveStart.addingTimeInterval(2), activeElapsed: 2,
+            power: 200, heartRate: 120, heartRateSampleDate: archiveStart.addingTimeInterval(1)))
     #expect(ride.samples[0].heartRateSampleDate == archiveStart.addingTimeInterval(1))
     #expect(throws: RideArchiveError.self) {
-        try ride.append(sample: .init(date: archiveStart.addingTimeInterval(10), activeElapsed: 10,
-            heartRate: 120, heartRateSampleDate: archiveStart.addingTimeInterval(5)))
+        try ride.append(
+            sample: .init(
+                date: archiveStart.addingTimeInterval(10), activeElapsed: 10,
+                heartRate: 120, heartRateSampleDate: archiveStart.addingTimeInterval(5)))
     }
 }
 
@@ -76,9 +137,11 @@ private func archiveTestDirectory() throws -> URL {
     let repository = RideArchiveRepository(directory: directory)
     try repository.load()
     var ride = try archiveFixture()
-    try ride.append(sample: .init(date: archiveStart.addingTimeInterval(1), activeElapsed: 1,
-                                  power: 220, cadence: 85, heartRate: 120, target: 250,
-                                  interval: 1, intensity: 1.1, simulatedSpeed: 9, simulatedDistance: 9))
+    try ride.append(
+        sample: .init(
+            date: archiveStart.addingTimeInterval(1), activeElapsed: 1,
+            power: 220, cadence: 85, heartRate: 120, target: 250,
+            interval: 1, intensity: 1.1, simulatedSpeed: 9, simulatedDistance: 9))
     try repository.save(ride)
     let restart = RideArchiveRepository(directory: directory)
     try restart.load()
@@ -95,8 +158,10 @@ private func archiveTestDirectory() throws -> URL {
         try ride.setHealthReceipt(.init(status: .saved, workoutID: UUID()))
     }
     #expect(throws: RideArchiveError.self) { try ride.setHealthReceipt(.init(status: .failed)) }
-    try ride.setRecordingMetrics(.init(averageHeartRate: 120, maximumHeartRate: 125,
-                                      activeKilocalories: 10, restingKilocalories: 2))
+    try ride.setRecordingMetrics(
+        .init(
+            averageHeartRate: 120, maximumHeartRate: 125,
+            activeKilocalories: 10, restingKilocalories: 2))
     try restart.save(ride)
     let finishedRestart = RideArchiveRepository(directory: directory)
     try finishedRestart.load()
@@ -121,7 +186,8 @@ private func archiveTestDirectory() throws -> URL {
     let directory = try archiveTestDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let repository = RideArchiveRepository(directory: directory)
-    try repository.load(); try repository.save(ride)
+    try repository.load()
+    try repository.save(ride)
     let conflicting = try archiveFixture(id: ride.id)
     #expect(throws: RideArchiveError.self) { try repository.save(conflicting) }
     #expect(repository.rides[0].samples.count == 1)
@@ -168,25 +234,27 @@ private func archiveTestDirectory() throws -> URL {
 }
 
 @Test func archiveOptionalCadenceAndIntensitySnapshotsAreValidatedAndBackwardCompatible() throws {
-        let ride = try RideArchive(workout: .sample, ftp: 250, trainer: .init(name: "Trainer"),
-                                   cadenceConfiguration: .defaults, initialIntensity: 1.2)
-        let decoded = try JSONDecoder().decode(RideArchive.self, from: JSONEncoder().encode(ride))
-        #expect(decoded.cadenceConfiguration == .defaults)
-        #expect(decoded.initialIntensity == 1.2)
-        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ride)) as? [String: Any])
-        legacy.removeValue(forKey: "cadenceConfiguration")
-        legacy.removeValue(forKey: "initialIntensity")
-        let restored = try JSONDecoder().decode(RideArchive.self, from: JSONSerialization.data(withJSONObject: legacy))
-        try restored.validate()
-        #expect(restored.cadenceConfiguration == nil)
-        #expect(restored.initialIntensity == nil)
-        #expect(throws: RideArchiveError.self) {
-            try RideArchive(workout: .sample, ftp: 250, trainer: .init(name: "Trainer"),
-                            cadenceConfiguration: .init(easy: .init(lower: 100, upper: 50)))
-        }
-        #expect(throws: RideArchiveError.self) {
-            try RideArchive(workout: .sample, ftp: 250, trainer: .init(name: "Trainer"), initialIntensity: 2)
-        }
+    let ride = try RideArchive(
+        workout: .sample, ftp: 250, trainer: .init(name: "Trainer"),
+        cadenceConfiguration: .defaults, initialIntensity: 1.2)
+    let decoded = try JSONDecoder().decode(RideArchive.self, from: JSONEncoder().encode(ride))
+    #expect(decoded.cadenceConfiguration == .defaults)
+    #expect(decoded.initialIntensity == 1.2)
+    var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ride)) as? [String: Any])
+    legacy.removeValue(forKey: "cadenceConfiguration")
+    legacy.removeValue(forKey: "initialIntensity")
+    let restored = try JSONDecoder().decode(RideArchive.self, from: JSONSerialization.data(withJSONObject: legacy))
+    try restored.validate()
+    #expect(restored.cadenceConfiguration == nil)
+    #expect(restored.initialIntensity == nil)
+    #expect(throws: RideArchiveError.self) {
+        try RideArchive(
+            workout: .sample, ftp: 250, trainer: .init(name: "Trainer"),
+            cadenceConfiguration: .init(easy: .init(lower: 100, upper: 50)))
+    }
+    #expect(throws: RideArchiveError.self) {
+        try RideArchive(workout: .sample, ftp: 250, trainer: .init(name: "Trainer"), initialIntensity: 2)
+    }
 }
 
 @Test func archiveCorruptionIsExplicitAndCannotBeOverwritten() throws {
@@ -223,16 +291,47 @@ private func archiveTestDirectory() throws -> URL {
     #expect(throws: RideArchiveError.self) { try repository.save(archiveFixture()) }
     #expect(repository.rides.count == RideArchiveRepository.maximumRides)
 
-    var ride = try archiveFixture()
+    var ride = try RideArchive(
+        workout: Workout(
+            name: "Six-hour archive", description: "",
+            intervals: [.init(duration: 21600, startPower: 0.5, endPower: 0.5)], warnings: []),
+        ftp: 250, trainer: .init(name: "Trainer"), startedAt: archiveStart)
+    try ride.append(event: .init(state: .running, date: archiveStart, activeElapsed: 0))
     var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ride)) as? [String: Any])
     object["samples"] = try (0..<RideArchive.maximumSamples).map { second in
-        try JSONSerialization.jsonObject(with: JSONEncoder().encode(RideArchiveSample(
-            date: archiveStart.addingTimeInterval(Double(second)), activeElapsed: Double(second), power: 200)))
+        try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(
+                RideArchiveSample(
+                    date: archiveStart.addingTimeInterval(Double(second)), activeElapsed: Double(second), power: 200)))
     }
     ride = try JSONDecoder().decode(RideArchive.self, from: JSONSerialization.data(withJSONObject: object))
     try ride.validate()
     #expect(ride.samples.count == 21600)
     #expect(throws: RideArchiveError.self) {
         try ride.append(sample: .init(date: archiveStart.addingTimeInterval(21600), activeElapsed: 21600, power: 200))
+    }
+}
+
+@Test func archiveRejectsInvalidWorkoutAndOutOfWorkoutElapsedTime() throws {
+    #expect(throws: RideArchiveError.self) {
+        try RideArchive(
+            workout: Workout(
+                name: "Invalid", description: "",
+                intervals: [.init(duration: 60, startPower: .nan, endPower: 0.5)], warnings: []),
+            ftp: 250, trainer: .init(name: "Trainer"))
+    }
+    var ride = try archiveFixture()
+    #expect(throws: RideArchiveError.self) {
+        try ride.append(sample: .init(date: archiveStart.addingTimeInterval(2000), activeElapsed: 2000, power: 200))
+    }
+    try ride.append(
+        event: .init(
+            state: .paused, date: archiveStart.addingTimeInterval(1),
+            activeElapsed: 1, simulatedDistance: 10))
+    #expect(throws: RideArchiveError.self) {
+        try ride.append(
+            event: .init(
+                state: .paused, date: archiveStart.addingTimeInterval(2),
+                activeElapsed: 1, simulatedDistance: 9))
     }
 }

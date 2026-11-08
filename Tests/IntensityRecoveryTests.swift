@@ -48,3 +48,13 @@ import Testing
             range: PowerRange(minimum: 100, maximum: 2000, increment: 1), elapsed: 20, intensity: 0.5)
     }
 }
+    @Test func recoveryAtExactCompletionNeverRestartsTheLastInterval() throws {
+        let workout = Workout(name: "Complete", description: "",
+            intervals: [.init(duration: 60, startPower: 0.5, endPower: 0.5)], warnings: [])
+        var engine = try WorkoutPlayback(recovering: workout, ftp: 200,
+            range: .init(minimum: 0, maximum: 2000, increment: 1), elapsed: 60)
+        #expect(engine.position == nil)
+        #expect(engine.begin() == nil)
+        #expect(engine.elapsed == 60)
+        #expect(engine.finish() == .reducedLoadStop)
+    }

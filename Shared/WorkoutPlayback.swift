@@ -128,7 +128,7 @@ public struct WorkoutPlayback: Sendable {
     public init(recovering workout: Workout, ftp: Double, range: PowerRange,
                 elapsed: Double, intensity: Double = 1) throws {
         try self.init(workout: workout, ftp: ftp, range: range)
-        guard elapsed.isFinite, (0..<workout.duration).contains(elapsed),
+        guard elapsed.isFinite, (0...workout.duration).contains(elapsed),
               intensity.isFinite, (0.5...1.5).contains(intensity),
               workout.intervals.allSatisfy({
                   [$0.startPower, $0.endPower].allSatisfy {
@@ -139,7 +139,9 @@ public struct WorkoutPlayback: Sendable {
         self.elapsed = elapsed
         self.intensity = intensity
         state = .interrupted
-        error = "Recovered checkpoint. Trainer state is unconfirmed; resume explicitly."
+        error = elapsed == workout.duration ?
+            "Recovered completed progression. Trainer stop is unconfirmed; finish to retry reduced load." :
+            "Recovered checkpoint. Trainer state is unconfirmed; resume explicitly."
     }
 
     public mutating func acknowledged(opcode: UInt8, now: Double) -> Command? {

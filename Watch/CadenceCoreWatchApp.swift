@@ -20,13 +20,13 @@ struct CadenceCoreWatchApp: App {
     @ViewBuilder private var activeControls: some View {
         if workout.snapshot?.state == "running" {
             Button("Pause", systemImage: "pause.fill") { workout.control(.pause) }
-                .disabled(workout.commandPending)
+                .disabled(workout.saving || workout.commandPending)
         }
         if ["paused", "interrupted"].contains(workout.snapshot?.state ?? ""),
             workout.snapshot?.interval != nil
         {
             Button("Resume", systemImage: "play.fill") { workout.control(.resume) }
-                .disabled(workout.commandPending || workout.linkStale)
+                .disabled(workout.saving || workout.commandPending || workout.linkStale)
         }
         Button("Finish and save", role: .destructive) { confirmFinish = true }
             .disabled(workout.saving || workout.commandPending || workout.linkStale)
@@ -34,7 +34,7 @@ struct CadenceCoreWatchApp: App {
             Button("Intensity · \(currentIntensityPercent)%") {
                 intensity = Double(currentIntensityPercent)
                 showingIntensity = true
-            }.disabled(workout.commandPending || workout.linkStale)
+            }.disabled(workout.saving || workout.commandPending || workout.linkStale)
         }
         if workout.linkStale {
             if workout.mayReconnect {
@@ -44,6 +44,8 @@ struct CadenceCoreWatchApp: App {
                 Text("Recover and prepare the matching ride on iPhone first. This resumes the existing recording, not a new workout.")
                     .font(.caption2)
             }
+        }
+        if workout.mayEndLocally {
             Button("End locally", role: .destructive) { confirmLocalEnd = true }
             Text("Ending locally cannot reduce trainer load. Stop pedaling; use iPhone controls when available.")
                 .font(.caption2)
@@ -90,7 +92,12 @@ struct CadenceCoreWatchApp: App {
                 }
                 if workout.recovering { ProgressView("Checking previous session…") }
                 if workout.recoveryBlocked {
+                    if !workout.active {
+                        Button("Retry session check") { workout.retrySessionCheck() }
+                            .disabled(workout.recovering || workout.starting || workout.saving)
+                    }
                     Button("Check saved workout") { Task { await workout.reconcileSave() } }
+                        .disabled(!workout.mayCheckSavedWorkout)
                     Button("Clear recovery warning", role: .destructive) { confirmClearRecovery = true }
                     Text("Review Health first. Clearing does not save or delete a Health workout and does not stop trainer resistance.")
                         .font(.caption2)
@@ -161,7 +168,7 @@ struct CadenceCoreWatchApp: App {
                 }
                 sessionContent.tag(workout.active ? 1 : 0)
             }.tabViewStyle(.verticalPage)
-                .tint(.teal)
+                .tint(Color("AccentColor"))
                 .onChange(of: workout.active) { watchPage = 0 }
                 .sheet(isPresented: $showingIntensity) { intensitySheet }
                 .sheet(isPresented: $showingDiagnostics) { diagnosticsSheet }
@@ -211,7 +218,7 @@ private struct WatchRideMetrics: View {
                     let telemetryFresh =
                         linkFresh && (snapshot.telemetryDate.map { (0...3).contains(context.date.timeIntervalSince($0)) } ?? false)
                     Text(linkFresh ? snapshot.state.capitalized : "Connection lost").font(.caption.bold())
-                        .foregroundStyle(linkFresh ? Color.teal : Color.orange)
+                        .foregroundStyle(linkFresh ? Color("AccentColor") : Color.orange)
                     VStack(spacing: 2) {
                         Text("Scheduled target").font(.caption2).foregroundStyle(.secondary)
                         Text(snapshot.target.map { "\($0) W" } ?? "Unavailable")
@@ -227,7 +234,7 @@ private struct WatchRideMetrics: View {
                         metric("Active time", value: "\(Int(snapshot.elapsed) / 60):\(String(format: "%02d", Int(snapshot.elapsed) % 60))")
                     }
                     if let ride = workout.ride {
-                        ProgressView(value: snapshot.elapsed, total: ride.duration).tint(.teal)
+                        ProgressView(value: snapshot.elapsed, total: ride.duration).tint(Color("AccentColor"))
                     }
                     if let interval = snapshot.interval, let remaining = snapshot.remaining {
                         Text("Interval \(interval) · \(Int(ceil(remaining))) sec left").font(.caption2)
@@ -249,7 +256,7 @@ private struct WatchRideMetrics: View {
                             Text(target.source == .workoutTarget ? "Workout cadence" : "Suggested cadence")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity).padding(10)
-                            .background(Color.teal.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
+                            .background(Color("AccentColor").opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
                     }
                     if let cue = snapshot.cue, linkFresh, snapshot.state == "running" {
                         Text(cue).font(.callout.bold())
@@ -269,7 +276,12 @@ private struct WatchRideMetrics: View {
                         }
                     }
                 } else {
-                    ProgressView("Waiting for iPhone")
+                    if workout.linkStale {
+                        Text("iPhone link lost").font(.headline).foregroundStyle(.orange)
+                        Text(workout.status).font(.caption)
+                    } else {
+                        ProgressView("Waiting for iPhone")
+                    }
                     metric("Heart rate", value: hrFresh ? workout.heartRate.map { "\(Int($0.rounded())) bpm" } : nil)
                 }
             }
@@ -321,9 +333,15 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     private let checkpoint = WatchCheckpointStore()
     private(set) var recovering = true
     private(set) var recoveryBlocked = false
+    private var recoveryRequest: UUID?
+    private var recoveryTimeout: Task<Void, Never>?
     private var lastCheckpointDate: Date?
     private var lastCadenceHaptic: Double?
     var mayReconnect: Bool { active && ride != nil && !recoveryBlocked && !saving && !starting }
+    var mayCheckSavedWorkout: Bool { checkpoint.value != nil && !recovering && !starting && !saving }
+    var mayEndLocally: Bool {
+        active && ride != nil && !saving && !starting && (linkStale || snapshot?.state == "interrupted" || recoveryBlocked)
+    }
 
     override init() {
         super.init()
@@ -844,7 +862,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                 }
                 UserDefaults.standard.set(status, forKey: "lastHealthSaveStatus")
                 let receipt = RideMessage(
-                    rideID: ride.id, action: .saved,
+                    rideID: ride.id, action: .saved, date: end, snapshot: snapshot,
                     detail: "\(status) Health workout \(saved.uuid.uuidString).",
                     recording: recordingMetrics, savedWorkoutID: saved.uuid)
                 _ = checkpoint.save(
@@ -855,7 +873,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             } else {
                 builder.discardWorkout()
                 status = "Ended before recording started. No workout saved."
-                deliverReceipt(RideMessage(rideID: ride.id, action: .saved, detail: status))
+                deliverReceipt(RideMessage(rideID: ride.id, action: .saved, date: end, snapshot: snapshot, detail: status))
                 checkpoint.clear()
             }
             staged = nil
@@ -873,7 +891,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                 "Health save failed: \(error.localizedDescription). No automatic retry to avoid duplicate saves."
             status = "Workout ended; save is unconfirmed."
             UserDefaults.standard.set("\(status) \(recordingError ?? "")", forKey: "lastHealthSaveStatus")
-            deliverReceipt(RideMessage(rideID: ride.id, action: .failure, detail: recordingError))
+            deliverReceipt(RideMessage(rideID: ride.id, action: .failure, date: end, snapshot: snapshot, detail: recordingError))
             recoveryBlocked = checkpoint.value?.saveAttempted == true
         }
         resetSession()
@@ -920,10 +938,48 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
         }
     }
 
+    func retrySessionCheck() {
+        guard !active, !starting, !saving, !ending else {
+            status = "Finish the current Watch operation before retrying recovery."
+            return
+        }
+        recoverSession()
+    }
+
     private func recoverSession() {
+        recoveryTimeout?.cancel()
+        let request = UUID()
+        recoveryRequest = request
+        recovering = true
+        recoveryBlocked = false
+        status = "Checking the previous Watch session before preparing a new ride."
+        recoveryTimeout = Task {
+            do { try await Task.sleep(for: .seconds(12)) } catch is CancellationError { return } catch {
+                guard recoveryRequest == request else { return }
+                recoveryRequest = nil
+                recovering = false
+                recoveryBlocked = true
+                status = "Session-check timeout monitoring failed: \(error.localizedDescription). Review Health before retrying."
+                return
+            }
+            guard recoveryRequest == request else { return }
+            recoveryRequest = nil
+            recovering = false
+            recoveryBlocked = true
+            status = "Session check timed out. Retry, or review Health and any active Apple Workout before clearing recovery."
+        }
         store.recoverActiveWorkoutSession { recovered, error in
             Task { @MainActor in
-                defer { self.recovering = false }
+                guard self.recoveryRequest == request else { return }
+                self.recoveryRequest = nil
+                self.recoveryTimeout?.cancel()
+                defer {
+                    self.recovering = false
+                    if !self.active, !self.recoveryBlocked {
+                        self.status = "Prepare a workout on iPhone, then start here."
+                        self.acceptStage(WCSession.default.receivedApplicationContext)
+                    }
+                }
                 if let error {
                     self.status = "Previous Watch session check failed: \(error.localizedDescription)"
                     self.recoveryBlocked = true
@@ -1019,9 +1075,13 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             status = "End the recovered Watch session locally before clearing recovery."
             return
         }
+        recoveryTimeout?.cancel()
+        recoveryRequest = nil
+        recovering = false
         checkpoint.clear()
         recoveryBlocked = false
         status = "Recovery cleared after user review. Previous Health save is not confirmed."
+        acceptStage(WCSession.default.receivedApplicationContext)
     }
 
     func reconnectRide() async {
@@ -1058,7 +1118,15 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     }
 
     private func acceptStage(_ context: [String: Any]) {
-        guard !active, !starting, !saving, !recoveryBlocked else {
+        if recovering {
+            status = "Checking the previous Watch session before preparing a new ride."
+            return
+        }
+        if recoveryBlocked {
+            status = "Recording recovery needs attention. Review the previous Health save before preparing another ride."
+            return
+        }
+        guard !active, !starting, !saving else {
             status = "A workout is active. Finish it before loading another."
             return
         }

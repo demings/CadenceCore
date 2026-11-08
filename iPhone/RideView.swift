@@ -2,6 +2,7 @@ import Charts
 import SwiftUI
 
 struct RideView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var trainer: TrainerDiagnostic
     @Bindable var watch: WatchMirror
     @State private var confirmFinish = false
@@ -14,10 +15,10 @@ struct RideView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         Label(playback.state.title, systemImage: stateIcon(playback.state))
-                            .font(.subheadline.bold()).foregroundStyle(.teal)
+                            .font(.subheadline.bold()).foregroundStyle(Color("AccentColor"))
                         Text(playback.workout.name).font(.title2.bold())
                         Text(trainer.playbackStatus).font(.callout).foregroundStyle(.secondary)
-                        ProgressView(value: playback.elapsed, total: playback.workout.duration).tint(.teal)
+                        ProgressView(value: playback.elapsed, total: playback.workout.duration).tint(Color("AccentColor"))
                         HStack {
                             Label(clock(playback.elapsed), systemImage: "timer")
                             Spacer()
@@ -84,8 +85,12 @@ struct RideView: View {
                         .font(.headline)
                         Text(watch.isWatchRide ? watch.status : "This ride is not recorded to Health.").font(
                             .callout)
-                        if playback.state == .completed, watch.isWatchRide {
+                        if playback.state == .completed || trainer.recordingEnded, watch.isWatchRide {
                             NavigationLink("Inspect saved Health data") { HealthRecordingView() }
+                        }
+                        if trainer.recordingEnded, playback.state != .completed {
+                            Text("Recording ended. Reconnect the trainer and Finish to confirm reduced load; this ride cannot resume.")
+                                .font(.callout).foregroundStyle(.orange)
                         }
                         if playback.state == .completed, watch.coordinatedID != nil {
                             Button("Release Watch coordination") { confirmRelease = true }
@@ -128,18 +133,19 @@ struct RideView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             if let playback = trainer.playback, playback.state != .completed {
                 if playback.state == .running {
                     Button("Pause", systemImage: "pause.fill") { trainer.pauseWorkout() }
                         .buttonStyle(.borderedProminent)
-                } else if [.paused, .interrupted].contains(playback.state), playback.position != nil {
+                } else if [.paused, .interrupted].contains(playback.state), trainer.canResumeWorkout {
                     Button("Resume", systemImage: "play.fill") { watch.resumeRide() }
                         .buttonStyle(.borderedProminent).disabled(!trainer.readyToRide)
                 } else {
                     ProgressView().accessibilityLabel(playback.state.title)
                 }
-                Spacer()
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                 Button("Finish", systemImage: "stop.fill", role: .destructive) { confirmFinish = true }
                     .buttonStyle(.bordered).disabled(playback.state == .finishing)
             }
@@ -155,7 +161,9 @@ struct RideView: View {
                 trainer.telemetryDate.map { (0...3).contains(context.date.timeIntervalSince($0)) } ?? false
             let hrFresh =
                 watch.receivedAt.map { (0...10).contains(context.date.timeIntervalSince($0)) } ?? false
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
+            LazyVGrid(
+                columns: [GridItem(dynamicTypeSize.isAccessibilitySize ? .flexible() : .adaptive(minimum: 145), spacing: 12)], spacing: 12
+            ) {
                 MetricTile(
                     title: "Measured power", value: fresh ? trainer.power.map(String.init) : nil, unit: "W",
                     symbol: "bolt.fill")
@@ -206,13 +214,13 @@ struct RideView: View {
                             x: .value("Active minutes", x / 60), y: .value("Target watts", y),
                             series: .value("Interval", index)
                         )
-                        .foregroundStyle(Color.teal.opacity(0.18))
+                        .foregroundStyle(Color("AccentColor").opacity(0.18))
                         LineMark(
                             x: .value("Active minutes", x / 60), y: .value("Target watts", y),
                             series: .value("Interval", index)
                         )
                         .foregroundStyle(
-                            index == playback.position?.index ? Color.teal : Color.teal.opacity(0.5))
+                            index == playback.position?.index ? Color("AccentColor") : Color("AccentColor").opacity(0.5))
                     }
                 }
                 RuleMark(x: .value("Now", playback.elapsed / 60)).foregroundStyle(.primary)

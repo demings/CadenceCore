@@ -63,6 +63,7 @@ private struct RideHistoryDetailView: View {
     @State private var exportError: String?
     @State private var deleting = false
     @State private var showingExport = false
+    @State private var loadedConsent = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -170,7 +171,7 @@ private struct RideHistoryDetailView: View {
                                 "Not actual travel or GPS. Model v\(simulation.version), rider \(simulation.riderMass.formatted()) kg, bicycle \(simulation.bikeMass.formatted()) kg, CdA \(simulation.dragArea.formatted()), Crr \(simulation.rollingResistance.formatted()), air density \(simulation.airDensity.formatted()), efficiency \(simulation.efficiency.formatted())."
                             )
                             .font(.caption)
-                            Toggle("Include simulated speed/distance in TCX", isOn: $includeSimulation)
+                            Toggle("Include simulated speed/distance in TCX", isOn: simulationInclusion)
                         }
                     }
                     Section("Export for Strava") {
@@ -195,7 +196,9 @@ private struct RideHistoryDetailView: View {
                         }
                     }
                 }
-                .onAppear { includeSimulation = ride.simulation?.saveToHealth ?? false }
+                .onAppear {
+                    if !loadedConsent { includeSimulation = ride.simulation?.saveToHealth ?? false; loadedConsent = true }
+                }
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Export", systemImage: "square.and.arrow.up") { showingExport = true }
@@ -212,7 +215,7 @@ private struct RideHistoryDetailView: View {
                             }
                             if ride.simulation != nil {
                                 Section {
-                                    Toggle("Include simulated speed/distance in TCX", isOn: $includeSimulation)
+                                    Toggle("Include simulated speed/distance in TCX", isOn: simulationInclusion)
                                     Text("Estimates, not actual travel. Strava may not retain the simulated label.")
                                         .font(.caption)
                                 }
@@ -249,6 +252,14 @@ private struct RideHistoryDetailView: View {
             }
         }
         .navigationTitle("Ride summary")
+    }
+
+    private var simulationInclusion: Binding<Bool> {
+        Binding(get: { includeSimulation }, set: {
+            includeSimulation = $0
+            exportURL = nil
+            exportError = nil
+        })
     }
 
     private func prepareExport() {

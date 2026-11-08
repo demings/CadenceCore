@@ -45,6 +45,8 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private var archivedHeartRateDate: Date?
     private var recordingMetrics: RecordingMetrics?
     private(set) var recoveredWatchRide = false
+    var recordingEnded: Bool { currentArchive?.endedAt != nil }
+    var canResumeWorkout: Bool { currentArchive?.isRecoverable == true && playback?.position != nil }
     var simulationSettings: SimulationConfiguration? { configuration.simulation }
     private(set) var simulation: RideSimulation?
     var simulationError: String? { configuration.simulationError ?? simulationRuntimeError }
@@ -211,6 +213,11 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func resumeWorkout() {
         defer { onWorkoutUpdate?() }
+        guard canResumeWorkout else {
+            playbackStatus = "Recording or progression is complete. Finish to request reduced load; no target/start was sent."
+            record(playbackStatus)
+            return
+        }
         guard readyToRide else {
             playbackStatus = "Resume blocked: reacquire control and wait for fresh telemetry."
             record(playbackStatus)
@@ -327,6 +334,8 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 ? playback.workout.cues?.last(where: {
                     playback.elapsed >= $0.offset && playback.elapsed < $0.offset + $0.duration
                 })?.message : nil
+        } else {
+            clearCadenceGuidance()
         }
         if let error = playback?.error { record("Workout interrupted: \(error)") }
         if lastWorkoutLogTime.map({ now - $0 >= 15 }) ?? true {
@@ -450,17 +459,20 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    func recordHealthReceipt(_ receipt: RideHealthReceipt, rideID: UUID, summary: RecordingMetrics?)
-        throws
-    {
-        if currentArchive?.id == rideID {
-            try currentArchive?.setHealthReceipt(receipt)
-            if let summary { try currentArchive?.setRecordingMetrics(summary) }
-            if let currentArchive { try archiveStore.save(currentArchive) }
-        } else {
-            try archiveStore.setHealthReceipt(receipt, for: rideID)
-            if let summary { try archiveStore.setRecordingMetrics(summary, for: rideID) }
+    func recordHealthReceipt(_ message: RideMessage) throws {
+        guard let id = message.rideID, [.saved, .failure].contains(message.action),
+            var archive = currentArchive?.id == id ? currentArchive : archiveStore.ride(id: id)
+        else {
+            throw RideLinkError.invalidMessage
         }
+        let receipt = RideHealthReceipt(
+            status: message.action == .saved ? (message.savedWorkoutID == nil ? .unavailable : .saved) : .failed,
+            workoutID: message.savedWorkoutID, detail: message.detail)
+        try archive.concludeRecording(
+            receipt: receipt, at: message.date, metrics: message.recording,
+            lastConfirmedDistance: message.snapshot?.simulation?.distance)
+        if currentArchive?.id == id { currentArchive = archive }
+        try archiveStore.save(archive)
     }
 
     func reconcileRecoveredDistance(_ distance: Double) {
@@ -487,7 +499,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             return
         }
         do {
-            let elapsed = min(archive.activeDuration, archive.workout.duration.nextDown)
+            let elapsed = archive.activeDuration
             playback = try WorkoutPlayback(
                 recovering: archive.workout, ftp: archive.ftp, range: range,
                 elapsed: elapsed, intensity: archive.currentIntensity)

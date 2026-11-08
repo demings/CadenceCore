@@ -9,7 +9,7 @@ struct TrainerSetupView: View {
                 trainer.readyToRide ? "Trainer ready" : "Trainer setup",
                 systemImage: trainer.readyToRide ? "checkmark.circle.fill" : "bicycle"
             )
-            .foregroundStyle(trainer.readyToRide ? Color.teal : Color.primary)
+            .foregroundStyle(trainer.readyToRide ? Color("AccentColor") : Color.primary)
             if let name = trainer.selectedTrainerName { Text(name).font(.subheadline) }
             Text(trainer.status).font(.caption).foregroundStyle(.secondary)
             if let error = trainer.preparationError {
@@ -52,7 +52,7 @@ struct TrainerSetupView: View {
                 "Keep the trainer powered on and close other cycling apps. Preparation only requests control; resistance changes after you confirm Start."
             )
             .font(.caption)
-        }
+        }.buttonStyle(.bordered)
     }
 }
 
@@ -65,13 +65,21 @@ struct FTPSettingView: View {
             .keyboardType(.numberPad)
             .focused($focused)
             .accessibilityLabel("Functional threshold power in watts")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    if focused {
+                        Spacer()
+                        Button("Done") { focused = false }
+                    }
+                }
+            }
+            .onDisappear { focused = false }
         if let value = configuration.ftp {
             Text("Targets use \(Int(value)) W FTP, fixed at ride setup.").font(.caption)
         } else {
             Text("Enter your FTP from 1–2000 W. No default is assumed.")
                 .font(.caption).foregroundStyle(.orange)
         }
-        if focused { Button("Done") { focused = false } }
     }
 }
 
@@ -106,7 +114,7 @@ struct RideHomeView: View {
                                 Button("End local checkpoint", role: .destructive) {
                                     endingRideID = ride.id
                                 }
-                            }
+                            }.buttonStyle(.bordered).controlSize(.large)
                         }
                         Text(
                             "Recovery never resumes resistance automatically. For Watch rides, reconnect or end the existing recording on Watch; do not create a second Health workout."
@@ -126,11 +134,11 @@ struct RideHomeView: View {
                 }
             }
             .navigationTitle("Ride")
-            .confirmationDialog(
+            .alert(
                 "End this local checkpoint?",
                 isPresented: Binding(
                     get: { endingRideID != nil }, set: { if !$0 { endingRideID = nil } }
-                ), titleVisibility: .visible
+                )
             ) {
                 Button("End local checkpoint", role: .destructive) {
                     guard let id = endingRideID, let ride = trainer.archiveStore.ride(id: id) else { return }
@@ -141,6 +149,7 @@ struct RideHomeView: View {
                     }
                     endingRideID = nil
                 }
+                Button("Cancel", role: .cancel) { endingRideID = nil }
             } message: {
                 Text(
                     "This only closes local history. It does not stop trainer resistance or save/end an active Watch recording. Stop pedaling and finish the existing Watch recording separately."

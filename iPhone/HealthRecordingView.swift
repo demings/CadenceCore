@@ -58,9 +58,8 @@ struct HealthRecordingView: View {
             Section {
                 Text("Check what was actually saved")
                     .font(.headline)
-                Text("Read-only inspection of recent cycling workouts. Select a CadenceCore ride and optionally a reference ride from Apple's Workout app to compare supported saved data.")
-                Text("Health read denial is private: missing workouts or samples mean no accessible data, not necessarily zero or a failed recording. Watch-to-iPhone Health sync can take time.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Text("Compare a saved ride with a native Indoor Cycle reference. This page never changes Health data.")
+                    .font(.callout)
                 Button(loading ? "Loading…" : "Load recent cycling workouts") {
                     operation = Task { await loadWorkouts() }
                 }
@@ -73,11 +72,29 @@ struct HealthRecordingView: View {
                         authorization.cancel()
                     }
                 }
+                DisclosureGroup("Permissions and Watch sync") {
+                    Text(
+                        "Read-only inspection of recent cycling workouts. Select a CadenceCore ride and optionally a reference ride from Apple's Workout app to compare supported saved data."
+                    )
+                    Text(
+                        "Health read denial is private: missing workouts or samples mean no accessible data, not necessarily zero or a failed recording. Watch-to-iPhone Health sync can take time."
+                    )
+                }.font(.footnote).foregroundStyle(.secondary)
             }
             if loaded, workouts.isEmpty {
                 Section {
-                    ContentUnavailableView("No accessible cycling workouts", systemImage: "heart.text.clipboard",
-                        description: Text("Allow read access in Health settings, save a ride, wait for Watch sync, then reload. Searches cover the latest 10 cycling workouts in the past 30 days."))
+                    ContentUnavailableView {
+                        Label {
+                            Text("No accessible cycling workouts")
+                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "heart.text.clipboard")
+                        }
+                    } description: {
+                        Text(
+                            "Allow read access in Health settings, save a ride, wait for Watch sync, then reload. Searches cover the latest 10 cycling workouts in the past 30 days."
+                        )
+                    }
                 }
             }
             if !workouts.isEmpty {
@@ -94,8 +111,10 @@ struct HealthRecordingView: View {
                             Text(title(workout)).tag(Optional(workout.uuid))
                         }
                     }
-                    Text("Use a separate native Indoor Cycle workout with similar duration/effort. Differences alone do not establish a bug or identical calorie/ring calculations.")
-                        .font(.footnote)
+                    Text(
+                        "Use a separate native Indoor Cycle workout with similar duration/effort. Differences alone do not establish a bug or identical calorie/ring calculations."
+                    )
+                    .font(.footnote)
                     Button("Inspect saved data") { operation = Task { await inspect() } }
                         .disabled(loading || selectedID == nil)
                 }
@@ -107,8 +126,10 @@ struct HealthRecordingView: View {
                 Section("Saved-data report") {
                     Text(report).font(.footnote.monospaced()).textSelection(.enabled)
                     ShareLink(item: report) { Label("Share recording report", systemImage: "square.and.arrow.up") }
-                    Text("Sharing is optional. The report contains workout identifiers, times, source and health summaries. Review it before sharing.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(
+                        "Sharing is optional. The report contains workout identifiers, times, source and health summaries. Review it before sharing."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -118,7 +139,10 @@ struct HealthRecordingView: View {
             report = nil
         }
         .onChange(of: referenceID) { report = nil }
-        .onDisappear { operation?.cancel(); authorization.cancel() }
+        .onDisappear {
+            operation?.cancel()
+            authorization.cancel()
+        }
     }
 
     private func title(_ workout: HKWorkout) -> String {
@@ -137,16 +161,21 @@ struct HealthRecordingView: View {
             try Task.checkCancellation()
             let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
                 HKQuery.predicateForWorkouts(with: .cycling),
-                HKQuery.predicateForSamples(withStart: Date().addingTimeInterval(-30 * 86400), end: Date())
+                HKQuery.predicateForSamples(withStart: Date().addingTimeInterval(-30 * 86400), end: Date()),
             ])
-            workouts = try await HKSampleQueryDescriptor(predicates: [.workout(predicate)],
-                sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)], limit: 10).result(for: store)
-            selectedID = workouts.first(where: { $0.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier ||
-                $0.metadata?["CadenceCoreFTP"] != nil })?.uuid
+            workouts = try await HKSampleQueryDescriptor(
+                predicates: [.workout(predicate)],
+                sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)], limit: 10
+            ).result(for: store)
+            selectedID =
+                workouts.first(where: {
+                    $0.sourceRevision.source.bundleIdentifier == Bundle.main.bundleIdentifier || $0.metadata?["CadenceCoreFTP"] != nil
+                })?.uuid
             referenceID = nil
             loaded = true
         } catch {
-            self.error = "\(error.localizedDescription) [\((error as NSError).domain):\((error as NSError).code)]. Review Health read permissions and retry."
+            self.error =
+                "\(error.localizedDescription) [\((error as NSError).domain):\((error as NSError).code)]. Review Health read permissions and retry."
         }
     }
 
@@ -162,10 +191,12 @@ struct HealthRecordingView: View {
             if let reference = workouts.first(where: { $0.uuid == referenceID }) {
                 text += "\n\nREFERENCE WORKOUT\n" + (try await describe(reference))
             }
-            text += "\n\nAccessible samples only; missing data may reflect permission or sync. Coverage is the union of sample timestamp intervals, not proof of continuous sensor quality. Sample queries are capped at 10,000 per metric. Activity rings, native zones and proprietary Fitness presentation must be checked separately in Fitness."
+            text +=
+                "\n\nAccessible samples only; missing data may reflect permission or sync. Coverage is the union of sample timestamp intervals, not proof of continuous sensor quality. Sample queries are capped at 10,000 per metric. Activity rings, native zones and proprietary Fitness presentation must be checked separately in Fitness."
             report = text
         } catch {
-            self.error = "Inspection failed: \(error.localizedDescription) [\((error as NSError).domain):\((error as NSError).code)]. No complete report generated; retry after Health sync."
+            self.error =
+                "Inspection failed: \(error.localizedDescription) [\((error as NSError).domain):\((error as NSError).code)]. No complete report generated; retry after Health sync."
         }
     }
 
@@ -181,10 +212,12 @@ struct HealthRecordingView: View {
             "Health active duration: \(number(workout.duration)) s",
             "Elapsed span: \(number(bounds.duration)) s",
             "Pause events: \((workout.workoutEvents ?? []).filter { $0.type == .pause }.count)",
-            "Resume events: \((workout.workoutEvents ?? []).filter { $0.type == .resume }.count)"
+            "Resume events: \((workout.workoutEvents ?? []).filter { $0.type == .resume }.count)",
         ]
         if let expected = metadata["CadenceCoreActiveDurationSeconds"] as? Double {
-            lines.append("iPhone active duration: \(number(expected)) s; Health difference: \(number(workout.duration - expected)) s (mirroring/lifecycle latency may differ)")
+            lines.append(
+                "iPhone active duration: \(number(expected)) s; Health difference: \(number(workout.duration - expected)) s (mirroring/lifecycle latency may differ)"
+            )
         }
         if let enabled = metadata["CadenceCoreSimulationHealthEnabled"] as? Bool {
             lines.append("Simulated Health travel requested: \(enabled ? "yes" : "no")")
@@ -197,7 +230,8 @@ struct HealthRecordingView: View {
             try Task.checkCancellation()
             let samples = try await HKSampleQueryDescriptor(
                 predicates: [.quantitySample(type: metric.type, predicate: HKQuery.predicateForObjects(from: workout))],
-                sortDescriptors: [SortDescriptor(\.startDate)], limit: 10001).result(for: store)
+                sortDescriptors: [SortDescriptor(\.startDate)], limit: 10001
+            ).result(for: store)
             let visible = Array(samples.prefix(10000))
             let coverage = RecordingCoverage.seconds(visible.map { DateInterval(start: $0.startDate, end: $0.endDate) }, within: bounds)
             let statistics = workout.statistics(for: metric.type)
@@ -206,7 +240,9 @@ struct HealthRecordingView: View {
             let summary = value.map { number($0.doubleValue(for: metric.unit) * scale) } ?? "not accessible"
             let simulated = visible.filter { $0.metadata?["CadenceCoreSimulated"] as? Bool == true }.count
             lines.append("\n\(metric.label): \(metric.cumulative ? "sum" : "average") \(summary)")
-            lines.append("Accessible samples: \(visible.count)\(samples.count > 10000 ? "+" : ""); timestamp coverage: \(number(coverage)) s; labeled simulated: \(simulated)")
+            lines.append(
+                "Accessible samples: \(visible.count)\(samples.count > 10000 ? "+" : ""); timestamp coverage: \(number(coverage)) s; labeled simulated: \(simulated)"
+            )
             if metric == .heartRate, let maximum = statistics?.maximumQuantity() {
                 lines.append("Maximum HR: \(number(maximum.doubleValue(for: metric.unit))) bpm")
             }
@@ -222,8 +258,11 @@ struct HealthRecordingView: View {
         }
         let active = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
         let resting = workout.statistics(for: HKQuantityType(.basalEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
-        if let active, let resting { lines.append("\nTotal energy (active + resting): \(number(active + resting)) kcal") }
-        else { lines.append("\nTotal energy unavailable: active and resting quantities are both required; no fabricated fallback.") }
+        if let active, let resting {
+            lines.append("\nTotal energy (active + resting): \(number(active + resting)) kcal")
+        } else {
+            lines.append("\nTotal energy unavailable: active and resting quantities are both required; no fabricated fallback.")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -244,15 +283,18 @@ private final class HealthReadAuthorization {
             requestID = id
             self.continuation = continuation
             timeout = Task {
-                do { try await Task.sleep(for: .seconds(60)) }
-                catch { return }
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
                 finish(.failure(HealthInspectionError.authorizationTimeout), id: id)
             }
             store.requestAuthorization(toShare: [], read: read) { success, error in
                 Task { @MainActor in
-                    if let error { self.finish(.failure(error), id: id) }
-                    else if success { self.finish(.success(()), id: id) }
-                    else { self.finish(.failure(HealthInspectionError.authorizationIncomplete), id: id) }
+                    if let error {
+                        self.finish(.failure(error), id: id)
+                    } else if success {
+                        self.finish(.success(()), id: id)
+                    } else {
+                        self.finish(.failure(HealthInspectionError.authorizationIncomplete), id: id)
+                    }
                 }
             }
         }

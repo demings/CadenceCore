@@ -39,7 +39,7 @@ struct CadenceCoreApp: App {
                     .tabItem { Label("Settings", systemImage: "gearshape") }
                     .tag(3)
             }
-            .tint(.teal)
+            .tint(Color("AccentColor"))
             .onOpenURL { url in
                 selectedTab = 0
                 incomingURL = url
@@ -130,7 +130,7 @@ struct WorkoutLibraryView: View {
                                 workout.name = saved.name + " copy"
                                 save(workout, source: saved.source)
                             } catch { errorMessage = error.localizedDescription }
-                        }.tint(.teal)
+                        }.tint(Color("AccentColor"))
                     }
                 }
             }
@@ -321,9 +321,9 @@ struct WorkoutPreviewView: View {
                 Section("Workout profile (% FTP)") {
                     Chart(profile(workout)) { point in
                         AreaMark(x: .value("Minutes", point.minutes), y: .value("% FTP", point.percent))
-                            .foregroundStyle(.teal.opacity(0.25))
+                            .foregroundStyle(Color("AccentColor").opacity(0.25))
                         LineMark(x: .value("Minutes", point.minutes), y: .value("% FTP", point.percent))
-                            .foregroundStyle(.teal)
+                            .foregroundStyle(Color("AccentColor"))
                     }
                     .frame(height: 160)
                     .accessibilityLabel("Workout power profile. Full interval values are listed below.")

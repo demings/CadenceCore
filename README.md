@@ -10,7 +10,7 @@ The agreed MVP is implemented in software. The user previously confirmed trainer
 
 The **Workouts** tab supports Files-based ZWO import, original example workouts, name search, favorites, local SwiftData persistence, rename, duplicate, and confirmed deletion. Open a workout for a single setup flow: **training targets → trainer → start your ride**. Enter your FTP (1–2000 W) there or in Settings to see interval watt targets alongside % FTP, a power-profile chart, and an accessible interval-list alternative. FTP and simulation preferences share one observable configuration owner and existing persisted keys; a ride keeps an immutable snapshot.
 
-The FTP number pad has an inline **Done** button to dismiss it; scrolling also dismisses it interactively. No FTP default is assumed.
+The FTP number pad has a native keyboard-accessory **Done** button, including at large text sizes; scrolling also dismisses it interactively. No FTP default is assumed.
 
 ## Guided setup and navigation
 
@@ -21,6 +21,7 @@ The FTP number pad has an inline **Done** button to dismiss it; scrolling also d
 - Low-level tests and **Reduce load to 0 W and stop** remain under **Settings → Diagnostics and exportable log**. They are not prerequisites. iPhone-only playback is a secondary option: it saves locally and exports TCX, but has no Health recording or Watch heart rate.
 - Paused/interrupted rides expose trainer preparation within **Ride**. Restoring connection/checkpoints never automatically resumes ERG. Explicit Watch reconnection can continue the same recovered Health session after matching iPhone recovery; unconfirmed or unavailable recordings must be ended locally and reviewed.
 - Watch start errors include the operation, localized message and error domain/code. Last error text remains in Watch troubleshooting and, when reachable, iPhone Settings. Watch waits up to eight seconds for prepared/ended lifecycle transitions instead of immediately starting mirroring or reusing a finishing session. An unconfirmed end keeps the local-end escape hatch rather than silently claiming cleanup.
+- Startup's previous-session check has a 12-second bound with **Retry session check** and late-response protection. A timeout does not automatically start or save another recording; review Health and any active Apple Workout before explicitly clearing the warning.
 
 The user confirms that guided preparation, starting a short ride on Watch, finishing/saving, and then starting a second ride work on the actual devices after this milestone. This closes the reported startup acceptance blocker for that sequence; the original error's exact cause was not captured. It does not verify long-duration/interruption behavior, full native Indoor Cycle metric parity or simulated Health sample completeness. If startup fails again, share the displayed operation/domain/code. Existing Health-session recovery is now implemented conservatively, but crash/radio-loss acceptance is still outstanding.
 
@@ -133,7 +134,7 @@ The desired recording baseline is Apple's native Indoor Cycle: duration/pause ev
 - Shows missing/stale trainer measurements after three seconds and HR after ten seconds.
 - Saves a bounded, millisecond-timestamped diagnostic log locally, restores it at launch, and exports it using the share sheet. During the background test, measured power/cadence are logged every 15 seconds with monotonic elapsed time. Log files are writable after the first device unlock, including while subsequently locked. No heart-rate samples are written to that log.
 
-Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Coordinated Watch-started rides save to Health, with configured optional simulated speed/distance. Cadence coaching, history/checkpoint recovery and Strava export are not available yet.
+Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Coordinated Watch-started rides save to Health, with configured optional simulated speed/distance. Cadence coaching, history/checkpoint recovery and manual TCX export are available in the main workout workflow.
 
 ## Build
 
@@ -196,7 +197,9 @@ After relaunch, use **Ride → Recover this ride**, explicitly connect the origi
 
 If Watch recovery finds an attempted but unconfirmed Health save, **Check saved workout** reconciles by the ride's stable external UUID. It never automatically calls finish/save again. Review Health and end the existing recording locally when reconnection is unavailable. **End local checkpoint** only closes local history: it does not reduce trainer resistance, stop Watch recording, or confirm Health saving.
 
-Completed History details offer **Export TCX**, a simulation inclusion toggle and native sharing to Files. Export remains available if Health saving fails. TCX contains measured power/cadence/heart rate, UTC timestamps, active duration, available energy and optional clearly disclosed simulated speed/distance, with separate tracks at pauses and gaps. No GPS, target watts masquerading as measurements, missing trackpoint zeros or inferred calories are inserted. Mandatory TCX Lap zero placeholders are disclosed in Notes. Empty measured rides cannot export. Re-export uses a stable activity identity/file URL.
+**End locally** on Watch is also available when trainer playback is interrupted, even if the iPhone–Watch link remains healthy. Stop pedaling first: local end cannot confirm reduced trainer load. A terminal Watch save/failure receipt closes local recording history and preserves the last known active time/distance, without adding interruption-gap time or permitting that finished recording to resume. If trainer stop remains unconfirmed, iPhone keeps safety controls available; reconnect and **Finish** to request acknowledged reduced load.
+
+Completed History details offer a toolbar **Export** sheet, a simulation inclusion toggle, **Prepare TCX file**, and native sharing to Files. Changing simulation inclusion invalidates the previously prepared share file. Export remains available if Health saving fails. TCX contains measured power/cadence/heart rate, UTC timestamps, active duration, available energy and optional clearly disclosed simulated speed/distance, with separate tracks at pauses and gaps. No GPS, target watts masquerading as measurements, missing trackpoint zeros or inferred calories are inserted. Mandatory TCX Lap zero placeholders are disclosed in Notes. Empty measured rides cannot export. Re-export uses a stable activity identity/file URL.
 
 Upload the TCX manually at `https://www.strava.com/upload/select`. Automatic sync is excluded: Strava's native Health importer excludes custom-app recordings. A repeated manual upload may be rejected as a duplicate; it is not an automatic-upload retry. The external service may not retain simulation labels.
 
@@ -210,4 +213,8 @@ Upload the TCX manually at `https://www.strava.com/upload/select`. Automatic syn
 6. Test app switching, locked iPhone, wrist lowering and a longer ride. Then test Bluetooth loss and app relaunch safely: stop pedaling first, recover explicitly, and confirm no termination-gap distance or duplicate Health save.
 7. Verify light/dark mode, larger text and VoiceOver on your devices. The Watch separates glanceable metrics from wrist controls on vertically paged screens.
 
-Software validation includes deterministic model/protocol/archive tests, native paired builds, a real system Health-denial/empty-state UI workflow, and TCX validation against Garmin's public TCX v2 and ActivityExtension v2 schemas. Schema validation can be rerun with `CADENCECORE_TCX_SCHEMA=/path/to/local/validation.xsd swift test`; without local schemas that explicitly optional test is skipped.
+Software validation: **94 shared tests pass**, including Garmin TCX v2/ActivityExtension v2 schema validation and numerical normal-text contrast checks. Signed paired-device and paired-simulator builds pass. Native UI tests cover FTP/cadence keyboard dismissal, export consent/share invalidation, explicit recovery cancellation, and the real system Health-denial/empty-state flow in standard light mode and the largest accessibility text size in dark mode. The final wrapped Health empty state also passes both layouts.
+
+Actual native-app TCX files were schema-validated with simulation included (300 measured-power/speed/distance points) and excluded (300 measured-power points, no simulated speed or trackpoint distance, disclosed mandatory Lap distance zero). Watch startup was visually checked with correct Health entitlements; successful empty-session recovery now shows preparation guidance rather than stale checking text. Watch uses the bright dark-surface accent for both asset variants; iPhone adapts its accent to light/dark appearance.
+
+Schema validation can be rerun with `CADENCECORE_TCX_SCHEMA=/path/to/local/validation.xsd swift test`; without local schemas that explicitly optional test is skipped. These software checks do not replace the real-device checklist or establish an actual Strava upload, native Fitness presentation parity, long-ride reliability or live crash/radio recovery.

@@ -369,12 +369,7 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
                 if let recording = receipt.recording { recordingMetrics = recording }
             }
             if trainer.archiveStore.ride(id: id) != nil {
-                try trainer.recordHealthReceipt(
-                    RideHealthReceipt(
-                        status: receipt.action == .saved
-                            ? (receipt.savedWorkoutID == nil ? .unavailable : .saved) : .failed,
-                        workoutID: receipt.savedWorkoutID, detail: detail), rideID: id, summary: receipt.recording
-                )
+                try trainer.recordHealthReceipt(receipt)
             }
             UserDefaults.standard.set(id.uuidString, forKey: "lastHealthReceiptID")
             UserDefaults.standard.set(detail, forKey: "lastHealthReceiptStatus")
