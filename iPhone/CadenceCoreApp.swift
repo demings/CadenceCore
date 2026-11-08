@@ -26,7 +26,7 @@ struct DiagnosticView: View {
         List {
             Section {
                 Label("Hardware feasibility • Diagnostic build", systemImage: "wrench.and.screwdriver")
-                Text("This is not yet a workout player. Commands can change resistance. Stop/disconnect behavior must be verified on your trainer.")
+                Text("This is not yet a workout player. Reduced-load stop requests 0 W before FTMS stop. Neither acknowledgment nor disconnect guarantees zero resistance.")
                     .font(.footnote)
             }
             Section("Trainer") {
@@ -50,15 +50,24 @@ struct DiagnosticView: View {
                     }
                     Stepper("Diagnostic target: \(watts) W", value: $watts, in: 0...400, step: 5)
                     Button("Send target power") { confirmTarget = true }
-                        .disabled(trainer.sequenceActive || !trainer.hasControl || trainer.pending || !(trainer.powerRange?.contains(watts) ?? false))
+                        .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending || !(trainer.powerRange?.contains(watts) ?? false))
                     Button("Send start / resume") { trainer.startTrainer() }
-                        .disabled(!trainer.hasControl || trainer.pending)
-                    Button("Send stop", role: .destructive) { trainer.stopTrainer() }
-                        .disabled(!trainer.hasControl || trainer.pending)
-                    Button(trainer.sequenceActive ? "20-minute diagnostic running" : "Arm 20-minute background test") {
+                        .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || trainer.pending)
+                    Button("Reduce load to 0 W and stop", role: .destructive) { trainer.stopTrainer() }
+                        .disabled(trainer.stopFlow.isInProgress || !trainer.hasControl)
+                    Text(trainer.stopStatus)
+                        .font(.footnote)
+                        .foregroundStyle(trainer.stopFlow.state == .failed ? Color.red : Color.secondary)
+                    Picker("Test duration", selection: $trainer.testLength) {
+                        ForEach(DiagnosticSchedule.Length.allCases, id: \.self) { length in
+                            Text("\(length.rawValue) minutes").tag(length)
+                        }
+                    }
+                    .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress)
+                    Button(trainer.sequenceActive ? "Diagnostic running" : "Arm \(trainer.testLength.rawValue)-minute background test") {
                         confirmSequence = true
                     }
-                    .disabled(trainer.sequenceActive || !trainer.hasControl || !trainer.trainerRunning || trainer.pending)
+                    .disabled(trainer.sequenceActive || trainer.stopFlow.isInProgress || !trainer.hasControl || !trainer.trainerRunning || trainer.pending)
                     Button("Disconnect (does not release load)", role: .destructive) { trainer.disconnect() }
                 }
             }
@@ -89,12 +98,12 @@ struct DiagnosticView: View {
         .confirmationDialog("Send \(watts) W to the trainer?", isPresented: $confirmTarget, titleVisibility: .visible) {
             Button("Send \(watts) W") { trainer.setTarget(watts) }
         } message: {
-            Text("ERG resistance may increase as cadence falls. This diagnostic does not implement workout progression or automatic load release.")
+            Text("ERG resistance may increase as cadence falls. The reduced-load stop requests 0 W but cannot guarantee zero resistance.")
         }
         .confirmationDialog("Arm the diagnostic sequence?", isPresented: $confirmSequence, titleVisibility: .visible) {
-            Button("Arm 80–120 W sequence") { trainer.beginSequence() }
+            Button("Arm \(trainer.testLength.rawValue)-minute sequence") { trainer.beginSequence() }
         } message: {
-            Text("First send a target and start the trainer manually. The test changes target every five minutes, including a ramp. It uses telemetry callbacks while locked and sends stop at completion if telemetry continues. If telemetry or the app stops, the last target may remain active.")
+            Text("First send a target and start the trainer manually. Each stage lasts \(Int(trainer.testLength.stageDuration)) seconds: 80 W, 100 W, a 100–120 W ramp, then 80 W. With ongoing telemetry, completion requests 0 W, waits for acknowledgment, then sends stop. If telemetry or the app stops, the last target may remain active. Logs include measured power/cadence every 15 seconds.")
         }
     }
 }

@@ -27,6 +27,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     var persistenceError: String?
     var sequenceActive = false
     var trainerRunning = false
+    var testLength: DiagnosticSchedule.Length = .short
+    private(set) var stopFlow = ReducedLoadStop()
+    private(set) var stopStatus = "Reduced-load stop has not been requested."
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -37,9 +40,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private let formatter = ISO8601DateFormatter()
     private var sequenceStart: TimeInterval?
     private var sequenceTarget: Int?
+    private var activeTestLength: DiagnosticSchedule.Length = .short
+    private var lastSequenceSampleTime: TimeInterval?
 
     override init() {
         super.init()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         do {
             let directory = try FileManager.default.url(
                 for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true
@@ -55,7 +61,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     var canRequestControl: Bool {
-        connected && controlSubscribed && powerSupported && powerRange != nil && !pending
+        connected && controlSubscribed && powerSupported && powerRange != nil && !pending && !stopFlow.isInProgress
     }
 
     func scan() {
@@ -85,25 +91,33 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func beginSequence() {
-        guard hasControl, trainerRunning, !pending, let range = powerRange,
+        guard !sequenceActive, hasControl, trainerRunning, !pending, !stopFlow.isInProgress,
+              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3, let range = powerRange,
+              range.contains(0),
               (80...120).allSatisfy(range.contains) else {
-            record("Sequence blocked: acknowledged trainer start, control, and a supported 80–120 W range in 1 W steps are required.")
+            record("Sequence blocked: fresh telemetry, acknowledged trainer start/control, supported 0 W, and an 80–120 W range in 1 W steps are required.")
             return
         }
         sequenceStart = ProcessInfo.processInfo.systemUptime
+        activeTestLength = testLength
         sequenceTarget = nil
+        lastSequenceSampleTime = nil
         sequenceActive = true
-        record("20-minute diagnostic sequence armed. Start trainer manually before arming. Targets: 80 W / 100 W / 100–120 W ramp / 80 W, five minutes each.")
+        record("\(activeTestLength.rawValue)-minute diagnostic sequence armed. Targets: 80 W / 100 W / 100–120 W ramp / 80 W, \(Int(activeTestLength.stageDuration)) seconds each.")
         serviceSequence()
     }
 
     private func serviceSequence() {
         guard let start = sequenceStart, hasControl, !pending else { return }
         let elapsed = ProcessInfo.processInfo.systemUptime - start
-        guard let target = DiagnosticSchedule.target(at: elapsed) else {
+        if lastSequenceSampleTime.map({ elapsed - $0 >= 15 }) ?? true {
+            lastSequenceSampleTime = elapsed
+            record("Telemetry elapsed \(String(format: "%.3f", elapsed)) s, measured power \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { String(format: "%.1f rpm", $0) } ?? "unavailable").")
+        }
+        guard let target = DiagnosticSchedule.target(at: elapsed, length: activeTestLength) else {
             sequenceStart = nil
             sequenceActive = false
-            record("Diagnostic timeline complete after \(elapsed) seconds; sending stop. Physical load release remains unverified.")
+            record("Diagnostic timeline complete after \(elapsed) seconds; requesting acknowledged 0 W before stop.")
             stopTrainer()
             return
         }
@@ -114,27 +128,57 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func setTarget(_ watts: Int) {
-        guard hasControl, let range = powerRange, range.contains(watts),
+        guard !stopFlow.isInProgress, hasControl, let range = powerRange, range.contains(watts),
               let signed = Int16(exactly: watts) else {
             record("Target rejected: acquire control and use a supported power increment/range.")
             return
+        }
+        if stopFlow.state == .completed || stopFlow.state == .failed {
+            stopFlow = ReducedLoadStop()
+            stopStatus = "Target changed; reduced-load stop has not been requested."
         }
         send(FTMS.targetPower(signed))
     }
 
     func startTrainer() {
-        guard hasControl else { record("Start rejected: control has not been acquired."); return }
+        guard hasControl, !stopFlow.isInProgress, !sequenceActive else {
+            record("Start rejected: acquire control and wait for the active diagnostic or stop flow to finish.")
+            return
+        }
         send(Data([0x07]))
     }
 
     func stopTrainer() {
         sequenceStart = nil
         sequenceActive = false
-        guard hasControl else {
-            record("Trainer state unconfirmed: no control. Disconnecting is not a stop command.")
+        guard !stopFlow.isInProgress else { return }
+        guard hasControl, connected, controlSubscribed, powerRange?.contains(0) == true else {
+            failStop("Cannot request reduced load: control/connection or supported 0 W target unavailable.")
             return
         }
-        send(Data([0x08, 0x01]))
+        stopStatus = pending ? "Waiting for the pending command, then requesting 0 W…" : "Requesting 0 W…"
+        record("Reduced-load stop requested. 0 W acknowledgment is required before sending FTMS stop.")
+        if let command = stopFlow.begin(commandPending: pending) {
+            sendStopCommand(command)
+        }
+    }
+
+    private func sendStopCommand(_ command: ReducedLoadStop.Command) {
+        switch command {
+        case .zeroWatts:
+            stopStatus = "Requesting 0 W…"
+            send(FTMS.targetPower(0))
+        case .stop:
+            stopStatus = "0 W acknowledged; sending FTMS stop…"
+            record("Reduced-load target 0 W acknowledged. This does not guarantee zero resistance.")
+            send(Data([0x08, 0x01]))
+        }
+    }
+
+    private func failStop(_ reason: String) {
+        stopFlow.fail()
+        stopStatus = "Trainer state unconfirmed. \(reason)"
+        record(stopStatus)
     }
 
     func disconnect() {
@@ -147,6 +191,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         guard !pending, connected, controlSubscribed, let peripheral, let controlPoint,
               let opcode = data.first else {
             record("Command not sent: control point unavailable or another command is pending.")
+            if stopFlow.isInProgress { failStop("Reduced-load stop command could not be sent.") }
             return
         }
         pending = true
@@ -162,6 +207,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             self.trainerRunning = false
             self.sequenceStart = nil
             self.sequenceActive = false
+            if self.stopFlow.isInProgress { self.failStop("Command \(opcode) timed out; reacquire control before retrying.") }
             self.record("Command \(opcode) timed out. Trainer state unconfirmed; reacquire control.")
         }
     }
@@ -181,7 +227,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true
             )
             let url = directory.appendingPathComponent("trainer-diagnostic.txt")
-            try events.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            try Data(events.joined(separator: "\n").utf8).write(
+                to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            )
             diagnosticFile = url
             persistenceError = nil
         } catch {
@@ -207,6 +255,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             status = "Unknown Bluetooth state."
         }
         if central.state != .poweredOn {
+            if stopFlow.state != .idle { failStop("Bluetooth is unavailable; load reduction cannot be confirmed.") }
             hasControl = false
             trainerRunning = false
             sequenceStart = nil
@@ -238,6 +287,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        if stopFlow.state != .idle { failStop("Connection ended; current trainer load cannot be confirmed.") }
         connected = false
         sequenceStart = nil
         sequenceActive = false
@@ -308,6 +358,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
+            if stopFlow.isInProgress { failStop("Bluetooth write failed: \(error.localizedDescription)") }
             clearPending()
             hasControl = false
             trainerRunning = false
@@ -350,8 +401,17 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                     if response.opcode == 0 { hasControl = true }
                     if response.opcode == 7 { trainerRunning = true }
                     if response.opcode == 8 { trainerRunning = false }
-                    record("Acknowledged FTMS opcode \(response.opcode). Stop acknowledgment does not prove unloaded resistance.")
+                    record("Acknowledged FTMS opcode \(response.opcode).")
+                    if stopFlow.isInProgress {
+                        if let next = stopFlow.commandAcknowledged() {
+                            sendStopCommand(next)
+                        } else if stopFlow.state == .completed {
+                            stopStatus = "0 W and stop acknowledged. Reduced load requested—not zero resistance."
+                            record(stopStatus)
+                        }
+                    }
                 } else {
+                    if stopFlow.isInProgress { failStop("Trainer rejected opcode \(response.opcode), result \(response.result).") }
                     hasControl = false
                     trainerRunning = false
                     sequenceStart = nil
@@ -361,6 +421,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             default: break
             }
         } catch {
+            if characteristic.uuid == CBUUID(string: "2AD9"), stopFlow.isInProgress {
+                failStop("Malformed control response: \(error.localizedDescription)")
+                clearPending()
+                hasControl = false
+                trainerRunning = false
+            }
             record("Malformed \(characteristic.uuid.uuidString): \(error.localizedDescription)")
         }
     }
