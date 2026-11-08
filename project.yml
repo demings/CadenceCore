@@ -39,7 +39,7 @@ targets:
   CadenceCoreWatch:
     type: application
     platform: watchOS
-    sources: [Watch]
+    sources: [Watch, Shared/RideMessage.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cadencecore.personal.watch
@@ -50,8 +50,8 @@ targets:
         WKCompanionAppBundleIdentifier: com.cadencecore.personal
         WKApplication: true
         WKBackgroundModes: [workout-processing]
-        NSHealthShareUsageDescription: Measure your heart rate during an indoor cycling diagnostic.
-        NSHealthUpdateUsageDescription: Run a diagnostic cycling session; diagnostic sessions are discarded, not saved.
+        NSHealthShareUsageDescription: Measure your heart rate during indoor cycling workouts.
+        NSHealthUpdateUsageDescription: Save indoor cycling workouts with heart rate, energy, and measured trainer power and cadence to Health.
     entitlements:
       path: Configuration/Watch.entitlements
       properties:

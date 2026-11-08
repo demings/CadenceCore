@@ -31,7 +31,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private(set) var stopFlow = ReducedLoadStop()
     private(set) var stopStatus = "Reduced-load stop has not been requested."
     private(set) var playback: WorkoutPlayback?
+    private(set) var playbackID: UUID?
     private(set) var playbackStatus = "No workout selected."
+    var onWorkoutUpdate: (() -> Void)?
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -52,6 +54,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func startWorkout(_ workout: Workout, ftp: Double) {
+        defer { onWorkoutUpdate?() }
         guard !workoutOwnsTrainer, !sequenceActive, connected, hasControl, !pending,
               !stopFlow.isInProgress, let range = powerRange,
               let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
@@ -61,6 +64,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
         do {
             playback = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
+            playbackID = UUID()
             lastWorkoutLogTime = nil
             playbackStatus = "Setting initial target…"
             record("Workout \(workout.name) starting with FTP snapshot \(ftp) W.")
@@ -72,10 +76,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func pauseWorkout() {
+        defer { onWorkoutUpdate?() }
         if let command = playback?.pause(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
     }
 
     func resumeWorkout() {
+        defer { onWorkoutUpdate?() }
         guard connected, hasControl, !pending, !stopFlow.isInProgress,
               let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
             playbackStatus = "Resume blocked: reacquire control and wait for fresh telemetry."
@@ -94,7 +100,14 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func finishWorkout() {
+        defer { onWorkoutUpdate?() }
         if let command = playback?.finish(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
+    }
+
+    func interruptCoordinatedWorkout(_ reason: String) {
+        guard workoutOwnsTrainer, playback?.state != .interrupted else { return }
+        interruptWorkout(reason)
+        stopTrainer()
     }
 
     private func perform(_ command: WorkoutPlayback.Command) {
@@ -119,6 +132,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         workoutWatchdog?.cancel()
         playbackStatus = reason
         record("Workout interrupted: \(reason)")
+        onWorkoutUpdate?()
     }
 
     private func serviceWorkout() {
@@ -131,6 +145,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             record("Workout elapsed \(playback?.elapsed ?? 0) s, measured \(power.map { "\($0) W" } ?? "unavailable"), cadence \(cadence.map { "\($0) rpm" } ?? "unavailable").")
         }
         if let command { perform(command) }
+        onWorkoutUpdate?()
     }
 
     private func monitorWorkoutTelemetry() {
@@ -254,6 +269,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func stopTrainer() {
+        defer { onWorkoutUpdate?() }
         if workoutOwnsTrainer, let state = playback?.state,
            ![.pausing, .finishing, .interrupted].contains(state) {
             _ = playback?.finish(now: ProcessInfo.processInfo.systemUptime)
@@ -498,6 +514,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        defer { if characteristic.uuid == CBUUID(string: "2AD9") { onWorkoutUpdate?() } }
         if let error { record("Read/notification failed: \(error.localizedDescription)"); return }
         guard let data = characteristic.value else { record("Empty characteristic value."); return }
         do {

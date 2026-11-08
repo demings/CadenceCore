@@ -5,8 +5,14 @@ import Charts
 
 @main
 struct CadenceCoreApp: App {
-    @State private var trainer = TrainerDiagnostic()
-    @State private var watch = WatchMirror()
+    @State private var trainer: TrainerDiagnostic
+    @State private var watch: WatchMirror
+
+    init() {
+        let trainer = TrainerDiagnostic()
+        _trainer = State(initialValue: trainer)
+        _watch = State(initialValue: WatchMirror(trainer: trainer))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -46,7 +52,7 @@ struct CadenceCoreApp: App {
                     }
                 }
                 Section {
-                    Text("Connect and request trainer control in Diagnostics, then open a workout to start ERG playback. This build does not save rides to Health or history yet.")
+                    Text("Connect and request trainer control in Diagnostics, then open a workout. Send to Watch for Health recording, or start iPhone-only playback without saving.")
                         .font(.footnote)
                     Button("Import ZWO", systemImage: "square.and.arrow.down") {
                         ftpFocused = false
@@ -166,6 +172,7 @@ struct CadenceCoreApp: App {
         @State private var editingName = ""
         @State private var renaming = false
         @State private var confirmStart = false
+        @State private var confirmWatch = false
         @State private var showingRide = false
 
         private var ftp: Double? {
@@ -197,10 +204,13 @@ struct CadenceCoreApp: App {
                     Section {
                         Text(workout.description)
                         LabeledContent("Duration", value: "\(Int(workout.duration / 60)) min \(Int(workout.duration) % 60) sec")
-                        Text("ERG playback uses a fixed FTP snapshot. This build does not save rides to Health or history.")
+                        Text("Send to Watch for controls and Health recording. iPhone-only playback does not save a ride.")
                             .font(.footnote)
+                        Button("Send to Watch", systemImage: "applewatch") { confirmWatch = true }
+                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || watch.coordinatedID != nil)
+                        Text(watch.status).font(.caption)
                         Button("Start ERG workout", systemImage: "play.fill") { confirmStart = true }
-                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || trainer.stopFlow.isInProgress)
+                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || trainer.stopFlow.isInProgress || watch.coordinatedID != nil)
                         if !trainer.hasControl {
                             Text("Connect and request control in the Diagnostics tab first.")
                                 .font(.caption).foregroundStyle(.orange)
@@ -241,6 +251,15 @@ struct CadenceCoreApp: App {
             }
             .navigationTitle(saved.name)
             .navigationDestination(isPresented: $showingRide) { RideView(trainer: trainer, watch: watch) }
+            .confirmationDialog("Send this workout to Watch?", isPresented: $confirmWatch, titleVisibility: .visible) {
+                Button("Send to Watch") {
+                    guard var workout, let ftp else { return }
+                    workout.name = saved.name
+                    Task { await watch.stage(workout, ftp: ftp) }
+                }
+            } message: {
+                Text("Review import warnings first. Start on Watch after delivery. Watch records one indoor cycling workout to Health; iPhone must remain connected to the trainer.")
+            }
             .confirmationDialog("Start this ERG workout?", isPresented: $confirmStart, titleVisibility: .visible) {
                 Button("Start workout") {
                     guard var workout, let ftp else { return }
@@ -249,7 +268,7 @@ struct CadenceCoreApp: App {
                     showingRide = trainer.workoutOwnsTrainer
                 }
             } message: {
-                Text("Trainer resistance follows the imported intervals. Pause/finish requests reduced load, not zero resistance. Review import warnings first. Watch controls and Health recording are not connected to playback yet.")
+                Text("iPhone-only ride: no Health save or Watch controls. Use Send to Watch instead for recording. Trainer resistance follows the imported intervals; pause/finish requests reduced load, not zero resistance.")
             }
             .toolbar {
                 Button("Rename") { editingName = saved.name; renaming = true }
@@ -281,6 +300,7 @@ struct RideView: View {
     @Bindable var trainer: TrainerDiagnostic
     @Bindable var watch: WatchMirror
     @State private var confirmFinish = false
+    @State private var confirmRelease = false
 
     var body: some View {
         List {
@@ -315,7 +335,7 @@ struct RideView: View {
                             .frame(minHeight: 44)
                     }
                     if [.paused, .interrupted].contains(playback.state), playback.position != nil {
-                        Button("Resume workout", systemImage: "play.fill") { trainer.resumeWorkout() }
+                        Button("Resume workout", systemImage: "play.fill") { watch.resumeRide() }
                             .disabled(trainer.pending || trainer.stopFlow.isInProgress || !trainer.hasControl)
                             .frame(minHeight: 44)
                         if !trainer.hasControl {
@@ -329,7 +349,14 @@ struct RideView: View {
                             .frame(minHeight: 44)
                     }
                     Text(trainer.stopStatus).font(.footnote)
-                    Text("No Health/history save yet. A Watch HR diagnostic runs separately and must be ended on Watch. Force-quitting can leave the trainer's last target active.")
+                    Text(watch.status).font(.footnote)
+                    if playback.state == .completed, watch.coordinatedID != nil {
+                        Button("Release Watch coordination") { confirmRelease = true }
+                            .font(.footnote)
+                    }
+                    Text(watch.isWatchRide
+                         ? "Watch saves the workout after confirmed finish. Keep both apps running. Force-quitting can leave the trainer's last target active."
+                         : "iPhone-only playback does not save to Health. Watch HR diagnostics must be ended separately on Watch. Force-quitting can leave the trainer's last target active.")
                         .font(.footnote)
                 }
             }
@@ -340,6 +367,11 @@ struct RideView: View {
             Button("Finish workout", role: .destructive) { trainer.finishWorkout() }
         } message: {
             Text("Progression ends and the app requests 0 W followed by stop. This does not guarantee zero resistance.")
+        }
+        .confirmationDialog("Release without a Health save receipt?", isPresented: $confirmRelease, titleVisibility: .visible) {
+            Button("Release coordination", role: .destructive) { watch.releaseFinishedCoordination() }
+        } message: {
+            Text("Use only if the Watch save result cannot arrive. This does not confirm a Health save or end a Watch recording. End any active session on Watch before starting another.")
         }
     }
 }
@@ -407,12 +439,12 @@ struct DiagnosticView: View {
             }
             Section("Apple Watch heart rate") {
                 Text(watch.status)
-                Button("Enable Watch diagnostic mirroring") { Task { await watch.prepare() } }
+                Button("Prepare Watch connection") { Task { await watch.prepare() } }
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let fresh = watch.receivedAt.map { context.date.timeIntervalSince($0) <= 10 } ?? false
                     LabeledContent("Heart rate", value: fresh ? watch.heartRate.map { "\(Int($0.rounded())) bpm" } ?? "Unavailable" : "Unavailable / stale")
                 }
-                Text("Diagnostic Watch sessions are discarded, not saved to Fitness.")
+                Text("Watch-started workouts save to Health. HR-only diagnostics are discarded.")
                     .font(.footnote)
             }
             Section("Discovered services") {

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000031 /* RideMessage.swift in iPhone Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000033; };
+		CC0000000000000000000032 /* RideMessage.swift in Watch Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000033; };
 		CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000022; };
 		CC0000000000000000000011 /* iPhone assets in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000013; };
 		CC0000000000000000000012 /* Watch assets in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000014; };
@@ -46,6 +48,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000033 /* RideMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideMessage.swift; sourceTree = "<group>"; };
 		CC0000000000000000000022 /* WorkoutPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPlayback.swift; sourceTree = "<group>"; };
 		CC0000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CC0000000000000000000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -83,6 +86,7 @@
 		E52A643E803AE0A09C13FD73 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000033 /* RideMessage.swift */,
 				CC0000000000000000000022 /* WorkoutPlayback.swift */,
 				CC0000000000000000000003 /* Workout.swift */,
 				CC0000000000000000000004 /* ZWOImporter.swift */,
@@ -211,6 +215,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000031 /* RideMessage.swift in iPhone Sources */,
 				CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */,
 				CC0000000000000000000001 /* Workout.swift in Sources */,
 				CC0000000000000000000002 /* ZWOImporter.swift in Sources */,
@@ -226,6 +231,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000032 /* RideMessage.swift in Watch Sources */,
 				47A8AD7FDE2849AE6286FF17 /* CadenceCoreWatchApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

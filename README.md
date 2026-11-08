@@ -1,10 +1,10 @@
 # CadenceCore
 
-Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, and iPhone ERG playback**.
+Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, ERG playback, and Watch-coordinated Health recording**.
 
 The original app icon combines a teal **C** with a power/heart-rate pulse on a dark background. Matching opaque 1024-pixel icons are included in the iPhone and Watch asset catalogs; the operating system applies its own rounded or circular mask.
 
-The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview and iPhone workout execution are implemented; **Watch workout controls, cadence guidance, Health saving, history/recovery, simulated speed/distance, and Strava export are not implemented yet**. Diagnostics establish the actual KICKR CORE 2 control and background behavior; general playback still needs actual-device acceptance.
+The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview, iPhone execution, and coordinated Watch controls/Health saving are implemented. **Cadence guidance, history/recovery, simulated speed/distance, and Strava export are not implemented yet**. Basic iPhone playback/pause/resume/finish are user-tested; coordinated Watch recording still needs actual-device acceptance.
 
 ## Workout library
 
@@ -35,7 +35,30 @@ Diagnostic target/start/test controls are blocked while the player owns the trai
 
 After an interruption, reconnect/reacquire control as necessary and resume explicitly, or retry finish. **Force-quit/relaunch loses ride progress and may leave the last target on the trainer.** The user reports workout playback, pause, resume, and finish work on the actual KICKR. This establishes basic functional acceptance, not measured ramp/boundary timing, automatic completion, long-duration continuity, or interruption recovery. Locked-screen general playback remains unverified; the earlier locked-screen test covered the diagnostic schedule only.
 
-This milestone does **not** create a saved ride, Health/Fitness workout, or export. Watch HR diagnostics must still be started and ended separately on Watch and are discarded. Watch-first coordinated controls/recording are the next integration, not an invitation to run Apple's Workout app simultaneously.
+**Start ERG workout** remains an iPhone-only option: it does not save to Health or include Watch controls. A separate Watch HR diagnostic can still display HR for that option, and must be ended/discarded on Watch.
+
+## Watch controls and Health recording
+
+1. Rebuild/install **both** apps. Close Apple's Workout and any other workout/trainer apps; CadenceCore Watch owns one HealthKit workout, and iPhone owns trainer control.
+2. Connect/request control in iPhone **Diagnostics**. In **Workouts**, enter FTP, open a workout, review warnings and choose **Send to Watch**. Allow Health permissions on iPhone if prompted. Sending stages the immutable workout snapshot; it does not change trainer resistance.
+3. Open CadenceCore on Watch, allow its Health permissions, and tap **Start workout**. Workout-write permission is required; missing optional power/cadence/energy sharing is shown explicitly. Watch prepares/mirrors its session before asking iPhone to start the trainer. The existing acknowledged target/start sequence still gates execution. Watch starts Health collection only after receiving the running state.
+4. Watch shows HR, scheduled/measured watts, cadence, active time and interval remaining, plus **Pause**, **Resume**, and confirmed **Finish and save**. Requests have ride/command identities and retries reuse the same identity. Watch does not claim a paused/resumed/completed trainer state merely because a message was sent. iPhone **Current ride** controls remain available.
+5. After iPhone confirms 0 W then stop, Watch ends collection and calls HealthKit's `finishWorkout` once. A successful result is an indoor cycling workout in **Health/Fitness**, with Watch HR/energy when available and measured trainer power/cadence when permission/data allow. Trainer sample windows skip stale/duplicate data and do not bridge pauses or gaps longer than three seconds. No simulated distance or GPS is added.
+6. Watch queues the save result back to iPhone using WatchConnectivity, because ending HealthKit automatically ends mirroring. A delayed save receipt is not a delayed trainer command; duplicate last-result receipts are ignored. Last save-result text is retained locally, not a full ride history.
+
+Watch HR and trainer measurements become unavailable/stale rather than zero. Live snapshots are sequenced and throttled independently of SwiftUI redraws; telemetry callbacks still drive ERG. Heartbeats also refresh paused/interrupted/completed state while Watch waits for finish/save.
+
+A live Watch-link gap longer than eight seconds freezes iPhone playback and requests reduced load when iOS can run and trainer control remains available. Watch pauses local recording on a stale/disconnected link. These are best-effort guards, not guarantees after app termination or radio loss. Resume is explicit; a broken HealthKit mirrored session cannot be reused as though still connected. After a lost link, use iPhone to finish/reduce load and Watch **End locally** if needed. Local end/save explicitly records that trainer stop was not confirmed.
+
+Health save errors are visible; saves are not automatically retried after an ambiguous failure to avoid duplicates. A prepared ride ended before collection starts is discarded, not saved as an empty workout. Watch is the sole saver; iPhone never creates a second Health workout. There is no crash recovery or durable ride/sample checkpointing yet. Do not force-quit either app during a ride. If iPhone is relaunched after staging, resend the workout; a stale Watch start is rejected, not applied to another ride.
+
+If the trainer has finished but a Watch save receipt cannot arrive, iPhone **Release Watch coordination** is a confirmed escape hatch. It does not promise a save or end Watch recording; end any active Watch session before starting another. In ordinary use, wait for the save result instead.
+
+### Short device acceptance
+
+Choose an appropriately easy workout and test a brief Watch-started ride. Verify start/HR on both devices (including wrist lowered), pause freezes active time and reduces load, resume restores the scheduled target, and **Finish and save** shows a Health workout exactly once. Check duration, pause exclusion, HR, and available power/cadence in Health/Fitness; permission-denied or missing streams are not fabricated. Export the diagnostic log if trainer state differs from the UI. Locked-screen continuity and interruption scenarios remain separate acceptance checks.
+
+Saving to Apple Fitness does **not** make Strava automatically import this third-party workout through its native Apple Health importer. Manual TCX export remains a future milestone.
 
 ## What this build does
 
@@ -50,7 +73,7 @@ This milestone does **not** create a saved ride, Health/Fitness workout, or expo
 - Shows missing/stale trainer measurements after three seconds and HR after ten seconds.
 - Saves a bounded, millisecond-timestamped diagnostic log locally, restores it at launch, and exports it using the share sheet. During the background test, measured power/cadence are logged every 15 seconds with monotonic elapsed time. Log files are writable after the first device unlock, including while subsequently locked. No heart-rate samples are written to that log.
 
-Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Cadence coaching, history recording, coordinated Watch playback controls, and Strava integration are not available yet.
+Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Coordinated Watch-started rides save to Health. Cadence coaching, history/checkpoint recovery, simulated speed/distance and Strava export are not available yet.
 
 ## Build
 
@@ -88,7 +111,7 @@ If you regenerate after selecting your team, XcodeGen can remove manually edited
 4. **If FTMS is missing or unsupported, stop here.** No vendor-specific writes are implemented. The next step is investigating a supported Wahoo protocol, not trying random commands.
 5. Request control. Confirm the log reports a successful trainer acknowledgment. Send a modest supported target, then start; observe actual measured power and trainer behavior.
 6. Tap **Reduce load to 0 W and stop** and verify the log shows target payload `05 00 00` acknowledged before stop payload `08 01` is issued/acknowledged. Observe reduced resistance. On the tested KICKR firmware 3.5.37, the user observed little resistance at 0/20 W (roughly 30 W measured while pedaling); FTMS stop alone had no apparent physical effect. A 0 W target does not guarantee zero resistance or zero measured power. Disconnecting is not a load-release command.
-7. On iPhone, tap **Enable Watch diagnostic mirroring** and authorize HealthKit. Start the diagnostic in the CadenceCore Watch app. Check live HR on both devices; lower your wrist and verify it continues. End/discard afterward.
+7. On iPhone, tap **Prepare Watch connection** and authorize HealthKit. Start **HR diagnostic** in the CadenceCore Watch app. Check live HR on both devices; lower your wrist and verify it continues. End/discard afterward.
 8. If manual control is working, send an initial target/start, choose **4 minutes**, then explicitly arm the background test. Fresh trainer telemetry and support for 0 W are required. Disconnect the Mac/debugger, lock iPhone, and ride only if those targets are appropriate for you. With ongoing telemetry, completion requests 0 W first and then stop. To end early, use **Reduce load to 0 W and stop**. Repeat with another app open. Export logs after each run. The short test checks transitions and automatic finish; retain the 20-minute option for longer continuity checks.
 9. Check scheduled command issue/acknowledgment timestamps at the one-minute transitions (five minutes for the extended test) and power tracking after settling. The timing gate is commands issued within two seconds of their expected steady-interval boundary, not instantaneous watt matching.
 10. Test disconnects, Bluetooth off/on, and unexpected interruptions. Confirm the UI reports uncertain trainer state rather than false success.
