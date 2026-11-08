@@ -9,17 +9,20 @@ public struct RideDescriptor: Codable, Equatable, Sendable {
     public let name: String
     public let duration: Double
     public let ftp: Double
+    public let simulation: SimulationConfiguration?
 
-    public init(id: UUID, name: String, duration: Double, ftp: Double) {
+    public init(id: UUID, name: String, duration: Double, ftp: Double, simulation: SimulationConfiguration? = nil) {
         self.id = id
         self.name = name
         self.duration = duration
         self.ftp = ftp
+        self.simulation = simulation
     }
 
     public var isValid: Bool {
         !name.isEmpty && name.utf8.count <= 4096 && duration.isFinite &&
-        duration > 0 && duration <= 21600 && ftp.isFinite && (1...2000).contains(ftp)
+        duration > 0 && duration <= 21600 && ftp.isFinite && (1...2000).contains(ftp) &&
+        (simulation.map(\.isValid) ?? true)
     }
 }
 
@@ -34,9 +37,11 @@ public struct RideSnapshot: Codable, Sendable {
     public let cadence: Double?
     public let telemetryDate: Date?
     public let status: String
+    public let simulation: SimulatedMetrics?
 
     public init(sequence: Int, state: String, elapsed: Double, interval: Int?, remaining: Double?,
-                target: Int?, power: Int?, cadence: Double?, telemetryDate: Date?, status: String) {
+                target: Int?, power: Int?, cadence: Double?, telemetryDate: Date?, status: String,
+                simulation: SimulatedMetrics? = nil) {
         self.sequence = sequence
         self.state = state
         self.elapsed = elapsed
@@ -47,6 +52,7 @@ public struct RideSnapshot: Codable, Sendable {
         self.cadence = cadence
         self.telemetryDate = telemetryDate
         self.status = status
+        self.simulation = simulation
     }
 
     public var isValid: Bool {
@@ -57,7 +63,8 @@ public struct RideSnapshot: Codable, Sendable {
         (interval.map { (1...2000).contains($0) } ?? true) &&
         (target.map { (0...32767).contains($0) } ?? true) &&
         (power.map { (-32768...32767).contains($0) } ?? true) &&
-        (cadence.map { $0.isFinite && (0...1000).contains($0) } ?? true)
+        (cadence.map { $0.isFinite && (0...1000).contains($0) } ?? true) &&
+        (simulation.map(\.isValid) ?? true)
     }
 }
 

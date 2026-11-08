@@ -1,10 +1,10 @@
 # CadenceCore
 
-Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, ERG playback, and Watch-coordinated Health recording**.
+Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics, a persistent workout library, ERG playback, Watch-coordinated Health recording, and simulated speed/distance**.
 
 The original app icon combines a teal **C** with a power/heart-rate pulse on a dark background. Matching opaque 1024-pixel icons are included in the iPhone and Watch asset catalogs; the operating system applies its own rounded or circular mask.
 
-The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview, iPhone execution, and coordinated Watch controls/Health saving are implemented. **Cadence guidance, history/recovery, simulated speed/distance, and Strava export are not implemented yet**. Basic iPhone playback/pause/resume/finish are user-tested; coordinated Watch recording still needs actual-device acceptance.
+The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Library/import/preview, iPhone execution, coordinated Watch controls/Health saving, and simulated flat-road speed/distance are implemented. **Cadence guidance, history/recovery and Strava export are not implemented yet**. The user confirms Watch start/pause/resume/finish and one saved workout in Health/Fitness. Full native Indoor Cycle metric parity and simulation Health/display behavior still require acceptance.
 
 ## Workout library
 
@@ -43,7 +43,7 @@ After an interruption, reconnect/reacquire control as necessary and resume expli
 2. Connect/request control in iPhone **Diagnostics**. In **Workouts**, enter FTP, open a workout, review warnings and choose **Send to Watch**. Allow Health permissions on iPhone if prompted. Sending stages the immutable workout snapshot; it does not change trainer resistance.
 3. Open CadenceCore on Watch, allow its Health permissions, and tap **Start workout**. Workout-write permission is required; missing optional power/cadence/energy sharing is shown explicitly. Watch prepares/mirrors its session before asking iPhone to start the trainer. The existing acknowledged target/start sequence still gates execution. Watch starts Health collection only after receiving the running state.
 4. Watch shows HR, scheduled/measured watts, cadence, active time and interval remaining, plus **Pause**, **Resume**, and confirmed **Finish and save**. Requests have ride/command identities and retries reuse the same identity. Watch does not claim a paused/resumed/completed trainer state merely because a message was sent. iPhone **Current ride** controls remain available.
-5. After iPhone confirms 0 W then stop, Watch ends collection and calls HealthKit's `finishWorkout` once. A successful result is an indoor cycling workout in **Health/Fitness**, with Watch HR/energy when available and measured trainer power/cadence when permission/data allow. Trainer sample windows skip stale/duplicate data and do not bridge pauses or gaps longer than three seconds. No simulated distance or GPS is added.
+5. After iPhone confirms 0 W then stop, Watch ends collection and calls HealthKit's `finishWorkout` once. A successful result is an indoor cycling workout in **Health/Fitness**, with Watch HR/energy when available and measured trainer power/cadence when permission/data allow. Trainer sample windows skip stale/duplicate data and do not bridge pauses or gaps longer than three seconds. Configured simulation can add labeled speed/distance; no GPS is added.
 6. Watch queues the save result back to iPhone using WatchConnectivity, because ending HealthKit automatically ends mirroring. A delayed save receipt is not a delayed trainer command; duplicate last-result receipts are ignored. Last save-result text is retained locally, not a full ride history.
 
 Watch HR and trainer measurements become unavailable/stale rather than zero. Live snapshots are sequenced and throttled independently of SwiftUI redraws; telemetry callbacks still drive ERG. Heartbeats also refresh paused/interrupted/completed state while Watch waits for finish/save.
@@ -60,6 +60,36 @@ Choose an appropriately easy workout and test a brief Watch-started ride. Verify
 
 Saving to Apple Fitness does **not** make Strava automatically import this third-party workout through its native Apple Health importer. Manual TCX export remains a future milestone.
 
+## Simulated speed and distance
+
+Open iPhone **Settings** to configure **Ride simulation**, then confirm setup. Simulation is off until configured; rider mass has no default and is not read from Health. Model settings persist locally. Updating/turning off settings affects the next ride or next **Send to Watch**, never a staged/active ride's snapshot.
+
+Enter rider mass (20–300 kg) and bicycle mass (1–50 kg, default 10). Advanced editable assumptions are drag area CdA (0.1–1 m², default 0.32), rolling resistance coefficient (0.001–0.03, default 0.005), air density (0.5–2 kg/m³, default 1.225), and drivetrain efficiency (0.5–1, default 0.97). Every value must be finite and within the displayed range. Numeric keyboards have **Done** and interactive scroll dismissal. Invalid stored settings produce a visible reconfiguration warning, not silent defaults.
+
+Model v1 solves the flat-road steady-state balance in SI units:
+
+```text
+measured watts × efficiency =
+  (rider kg + bicycle kg) × 9.80665 × rolling coefficient × speed m/s
+  + 0.5 × air density × CdA × (speed m/s)³
+```
+
+A bounded 60-step bisection finds nonnegative speed; distance uses trapezoidal integration between fresh monotonic trainer callbacks and is clipped to active workout time. Nonpositive power yields zero speed; missing/invalid power or telemetry, pause, finish, disconnect and interruption break the integration window. Gaps over three seconds and duplicate/replayed timestamps add no distance. No values are calculated from ERG target watts. No acceleration/coasting, grade, wind, drafting or virtual route is simulated, and trainer commands do not change.
+
+iPhone owns the model/accumulator and shows **Simulated speed** (km/h) and **Simulated distance** (km) on the ride screen, retaining the final total until another ride/app restart. Watch receives timestamped estimates and hides stale/paused speed, while retaining accumulated distance. These are estimates of flat-road travel, not actual outdoor distance or trainer flywheel speed.
+
+**Save simulated speed and distance** is on by default when you explicitly confirm setup, with an opt-out:
+
+- Watch requests cycling speed/distance sharing only when enabled. Missing authorization and failed sample writes are visible; live simulation can still run.
+- Fresh cycling-speed samples are added to the single Watch-owned workout alongside measured power/cadence. Speed samples are not backfilled across mirrored gaps.
+- At finish, one **aggregate cycling-distance sample** uses the final iPhone total. Its interval spans the recording, but its quantity contains only integrated active fresh-telemetry distance; it does not assign distance to paused/missing periods. This avoids undercounting or duplicate distance from dropped/replayed mirrored speed packets. Local end after a broken link uses only the last received total, so it may be lower than iPhone's final total.
+- Sample/workout metadata explicitly mark simulation, model version, parameter snapshot and measured-power provenance. Health/Fitness may display distance without preserving a prominent “simulated” label. Neither GPS nor Watch-estimated speed/distance is included.
+- With inclusion off, no simulation samples are saved to Health. iPhone-only playback still does not save any workout.
+
+After rebuilding **both apps**, configure simulation, resend a workout and try a short Watch ride. Check fresh speed/distance on both devices, unchanged distance during pause, and one saved workout after finish. Compare saved cycling distance in Health with iPhone's final simulated total (within 1 meter before UI rounding); verify cycling-speed samples and absence of GPS. Also verify opt-out and denied permissions. Actual-device Health/Fitness presentation remains unverified by simulator builds.
+
+The desired recording baseline is Apple's native Indoor Cycle: duration/pause events, HR, supported energy and summaries, plus measured trainer metrics and simulated speed/distance. A complete native-workout comparison, total-energy/zone availability and proprietary Fitness presentation remain a separate recording-parity acceptance task; missing values will not be fabricated.
+
 ## What this build does
 
 - Discovers nearby named BLE devices and lists a selected device's GATT services/characteristics.
@@ -73,7 +103,7 @@ Saving to Apple Fitness does **not** make Strava automatically import this third
 - Shows missing/stale trainer measurements after three seconds and HR after ten seconds.
 - Saves a bounded, millisecond-timestamped diagnostic log locally, restores it at launch, and exports it using the share sheet. During the background test, measured power/cadence are logged every 15 seconds with monotonic elapsed time. Log files are writable after the first device unlock, including while subsequently locked. No heart-rate samples are written to that log.
 
-Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Coordinated Watch-started rides save to Health. Cadence coaching, history/checkpoint recovery, simulated speed/distance and Strava export are not available yet.
+Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. Coordinated Watch-started rides save to Health, with configured optional simulated speed/distance. Cadence coaching, history/checkpoint recovery and Strava export are not available yet.
 
 ## Build
 

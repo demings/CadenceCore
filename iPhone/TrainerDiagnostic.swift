@@ -34,6 +34,9 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private(set) var playbackID: UUID?
     private(set) var playbackStatus = "No workout selected."
     var onWorkoutUpdate: (() -> Void)?
+    private(set) var simulationSettings: SimulationConfiguration?
+    private(set) var simulation: RideSimulation?
+    private(set) var simulationError: String?
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -53,7 +56,23 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         playback.map { $0.state != .completed } ?? false
     }
 
-    func startWorkout(_ workout: Workout, ftp: Double) {
+    func saveSimulationSettings(_ settings: SimulationConfiguration?) {
+        do {
+            if let settings {
+                guard settings.isValid else { throw SimulationError.invalidValues }
+                UserDefaults.standard.set(try JSONEncoder().encode(settings), forKey: "simulationSettings")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "simulationSettings")
+            }
+            simulationSettings = settings
+            simulationError = nil
+        } catch {
+            simulationError = "Simulation settings were not saved: \(error.localizedDescription)"
+            record(simulationError ?? error.localizedDescription)
+        }
+    }
+
+    func startWorkout(_ workout: Workout, ftp: Double, simulation configuration: SimulationConfiguration? = nil) {
         defer { onWorkoutUpdate?() }
         guard !workoutOwnsTrainer, !sequenceActive, connected, hasControl, !pending,
               !stopFlow.isInProgress, let range = powerRange,
@@ -63,7 +82,11 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             return
         }
         do {
-            playback = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
+            let engine = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
+            let model = try configuration.map { try RideSimulation(configuration: $0) }
+            playback = engine
+            simulation = model
+            if configuration != nil { simulationError = nil }
             playbackID = UUID()
             lastWorkoutLogTime = nil
             playbackStatus = "Setting initial target…"
@@ -77,6 +100,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func pauseWorkout() {
         defer { onWorkoutUpdate?() }
+        simulation?.suspend()
         if let command = playback?.pause(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
     }
 
@@ -96,11 +120,12 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             record(playbackStatus)
             return
         }
-        if let command = playback?.begin() { perform(command) }
+        if let command = playback?.begin() { simulation?.suspend(); perform(command) }
     }
 
     func finishWorkout() {
         defer { onWorkoutUpdate?() }
+        simulation?.suspend()
         if let command = playback?.finish(now: ProcessInfo.processInfo.systemUptime) { perform(command) }
     }
 
@@ -129,16 +154,27 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private func interruptWorkout(_ reason: String) {
         guard workoutOwnsTrainer else { return }
         playback?.interrupt(reason)
+        simulation?.suspend()
         workoutWatchdog?.cancel()
         playbackStatus = reason
         record("Workout interrupted: \(reason)")
         onWorkoutUpdate?()
     }
 
-    private func serviceWorkout() {
+    private func serviceWorkout(telemetrySample: Bool = false) {
         guard playback?.state == .running else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let command = playback?.service(now: now, commandPending: pending)
+        if telemetrySample, let playback, [.running, .finishing].contains(playback.state),
+           let date = telemetryDate {
+            do { try simulation?.sample(watts: power, uptime: now, activeTime: playback.elapsed, date: date) }
+            catch {
+                simulation?.suspend()
+                simulationError = "Simulation interrupted: \(error.localizedDescription)"
+                record(simulationError ?? error.localizedDescription)
+            }
+        }
+        if playback?.state != .running { simulation?.suspend() }
         if let error = playback?.error { record("Workout interrupted: \(error)") }
         if lastWorkoutLogTime.map({ now - $0 >= 15 }) ?? true {
             lastWorkoutLogTime = now
@@ -165,6 +201,15 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     override init() {
         super.init()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let data = UserDefaults.standard.data(forKey: "simulationSettings") {
+            do {
+                let settings = try JSONDecoder().decode(SimulationConfiguration.self, from: data)
+                guard settings.isValid else { throw SimulationError.invalidValues }
+                simulationSettings = settings
+            } catch {
+                simulationError = "Saved simulation settings are invalid: \(error.localizedDescription). Reconfigure before using simulation."
+            }
+        }
         do {
             let directory = try FileManager.default.url(
                 for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true
@@ -270,6 +315,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func stopTrainer() {
         defer { onWorkoutUpdate?() }
+        simulation?.suspend()
         if workoutOwnsTrainer, let state = playback?.state,
            ![.pausing, .finishing, .interrupted].contains(state) {
             _ = playback?.finish(now: ProcessInfo.processInfo.systemUptime)
@@ -515,8 +561,16 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         defer { if characteristic.uuid == CBUUID(string: "2AD9") { onWorkoutUpdate?() } }
-        if let error { record("Read/notification failed: \(error.localizedDescription)"); return }
-        guard let data = characteristic.value else { record("Empty characteristic value."); return }
+        if let error {
+            if characteristic.uuid == CBUUID(string: "2AD2") { simulation?.suspend() }
+            record("Read/notification failed: \(error.localizedDescription)")
+            return
+        }
+        guard let data = characteristic.value else {
+            if characteristic.uuid == CBUUID(string: "2AD2") { simulation?.suspend() }
+            record("Empty characteristic value.")
+            return
+        }
         do {
             switch characteristic.uuid.uuidString {
             case "2A26", "2A24", "2A29":
@@ -536,7 +590,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 cadence = sample.cadence
                 telemetryDate = Date()
                 serviceSequence()
-                serviceWorkout()
+                serviceWorkout(telemetrySample: true)
             case "2AD9":
                 let response = try FTMS.response(data)
                 guard response.opcode == pendingOpcode else {
@@ -580,6 +634,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             default: break
             }
         } catch {
+            if characteristic.uuid == CBUUID(string: "2AD2") { simulation?.suspend() }
             if characteristic.uuid == CBUUID(string: "2AD9") {
                 interruptWorkout("Malformed trainer response; state unconfirmed.")
                 clearPending()

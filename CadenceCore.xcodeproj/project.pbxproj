@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000041 /* RideSimulation.swift in iPhone Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000043; };
+		CC0000000000000000000042 /* RideSimulation.swift in Watch Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000043; };
+		CC0000000000000000000044 /* SimulationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000045; };
 		CC0000000000000000000031 /* RideMessage.swift in iPhone Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000033; };
 		CC0000000000000000000032 /* RideMessage.swift in Watch Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000033; };
 		CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000022; };
@@ -48,6 +51,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000043 /* RideSimulation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSimulation.swift; sourceTree = "<group>"; };
+		CC0000000000000000000045 /* SimulationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulationSettingsView.swift; sourceTree = "<group>"; };
 		CC0000000000000000000033 /* RideMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideMessage.swift; sourceTree = "<group>"; };
 		CC0000000000000000000022 /* WorkoutPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPlayback.swift; sourceTree = "<group>"; };
 		CC0000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -86,6 +91,7 @@
 		E52A643E803AE0A09C13FD73 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000043 /* RideSimulation.swift */,
 				CC0000000000000000000033 /* RideMessage.swift */,
 				CC0000000000000000000022 /* WorkoutPlayback.swift */,
 				CC0000000000000000000003 /* Workout.swift */,
@@ -109,6 +115,7 @@
 		EEEED3DDED4A2D53FE7FC89E /* iPhone */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000045 /* SimulationSettingsView.swift */,
 				CC0000000000000000000013 /* Assets.xcassets */,
 				591285974FAF0BE679956250 /* CadenceCoreApp.swift */,
 				2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */,
@@ -215,6 +222,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000041 /* RideSimulation.swift in iPhone Sources */,
+				CC0000000000000000000044 /* SimulationSettingsView.swift in Sources */,
 				CC0000000000000000000031 /* RideMessage.swift in iPhone Sources */,
 				CC0000000000000000000021 /* WorkoutPlayback.swift in Sources */,
 				CC0000000000000000000001 /* Workout.swift in Sources */,
@@ -231,6 +240,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000042 /* RideSimulation.swift in Watch Sources */,
 				CC0000000000000000000032 /* RideMessage.swift in Watch Sources */,
 				47A8AD7FDE2849AE6286FF17 /* CadenceCoreWatchApp.swift in Sources */,
 			);

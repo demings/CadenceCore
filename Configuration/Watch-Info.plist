@@ -21,7 +21,7 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>Measure your heart rate during indoor cycling workouts.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Save indoor cycling workouts with heart rate, energy, and measured trainer power and cadence to Health.</string>
+	<string>Save indoor cycling workouts with heart rate, energy, measured trainer power and cadence, and optional simulated speed and distance to Health.</string>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKBackgroundModes</key>

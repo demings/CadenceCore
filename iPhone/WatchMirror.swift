@@ -86,7 +86,8 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
                 return
             }
             _ = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
-            let descriptor = RideDescriptor(id: UUID(), name: workout.name, duration: workout.duration, ftp: ftp)
+            let descriptor = RideDescriptor(id: UUID(), name: workout.name, duration: workout.duration,
+                                            ftp: ftp, simulation: trainer.simulationSettings)
             guard descriptor.isValid else { throw RideLinkError.invalidMessage }
             guard WCSession.default.activationState == .activated, WCSession.default.isWatchAppInstalled else {
                 status = "Watch connection is not ready. Install/open CadenceCore on the paired Watch."
@@ -124,7 +125,7 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
                 sequence = 0
                 lastSent = nil
                 lastState = nil
-                trainer.startWorkout(stagedWorkout, ftp: staged.ftp)
+                trainer.startWorkout(stagedWorkout, ftp: staged.ftp, simulation: staged.simulation)
                 if !trainer.workoutOwnsTrainer {
                     sendFailure(to: staged.id, detail: trainer.playbackStatus)
                     coordinatedID = nil
@@ -172,7 +173,8 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
             interval: playback.position.map { $0.index + 1 }, remaining: playback.position?.remaining,
             target: playback.position?.targetWatts, power: fresh ? trainer.power : nil,
             cadence: fresh ? trainer.cadence : nil, telemetryDate: fresh ? trainer.telemetryDate : nil,
-            status: trainer.playbackStatus
+            status: [trainer.playbackStatus, trainer.simulationError].compactMap { $0 }.joined(separator: " "),
+            simulation: trainer.simulation?.metrics
         )
         sending = true
         lastSent = Date()

@@ -21,6 +21,8 @@ struct CadenceCoreApp: App {
                     .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
                 NavigationStack { DiagnosticView(trainer: trainer, watch: watch) }
                     .tabItem { Label("Diagnostics", systemImage: "wrench.and.screwdriver") }
+                NavigationStack { SimulationSettingsView(trainer: trainer) }
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
             }
             .tint(.teal)
         }
@@ -209,6 +211,13 @@ struct CadenceCoreApp: App {
                         Button("Send to Watch", systemImage: "applewatch") { confirmWatch = true }
                             .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || watch.coordinatedID != nil)
                         Text(watch.status).font(.caption)
+                        if let settings = trainer.simulationSettings {
+                            Text("Simulated flat-road speed/distance enabled · \(settings.riderMass.formatted()) kg rider. Health inclusion \(settings.saveToHealth ? "on" : "off"); frozen when sent to Watch.")
+                                .font(.caption)
+                        } else {
+                            Text("Set up simulated speed/distance in Settings (optional).").font(.caption)
+                        }
+                        if let issue = trainer.simulationError { Text(issue).font(.caption).foregroundStyle(.red) }
                         Button("Start ERG workout", systemImage: "play.fill") { confirmStart = true }
                             .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || trainer.stopFlow.isInProgress || watch.coordinatedID != nil)
                         if !trainer.hasControl {
@@ -264,7 +273,7 @@ struct CadenceCoreApp: App {
                 Button("Start workout") {
                     guard var workout, let ftp else { return }
                     workout.name = saved.name
-                    trainer.startWorkout(workout, ftp: ftp)
+                    trainer.startWorkout(workout, ftp: ftp, simulation: trainer.simulationSettings)
                     showingRide = trainer.workoutOwnsTrainer
                 }
             } message: {
@@ -358,6 +367,21 @@ struct RideView: View {
                          ? "Watch saves the workout after confirmed finish. Keep both apps running. Force-quitting can leave the trainer's last target active."
                          : "iPhone-only playback does not save to Health. Watch HR diagnostics must be ended separately on Watch. Force-quitting can leave the trainer's last target active.")
                         .font(.footnote)
+                }
+                if let simulation = trainer.simulation {
+                    Section("Simulated flat-road travel") {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            let fresh = playback.state == .running &&
+                                (simulation.metrics.date.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
+                            LabeledContent("Simulated speed", value: fresh
+                                ? simulation.metrics.speed.map { "\(($0 * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h" } ?? "Unavailable"
+                                : "Unavailable / paused")
+                            LabeledContent("Simulated distance", value: "\((simulation.metrics.distance / 1000).formatted(.number.precision(.fractionLength(2)))) km")
+                        }
+                        Text("Model v\(simulation.configuration.version) · rider \(simulation.configuration.riderMass.formatted()) kg · bike \(simulation.configuration.bikeMass.formatted()) kg. Estimates, not actual travel.")
+                            .font(.footnote)
+                        if let issue = trainer.simulationError { Text(issue).foregroundStyle(.red) }
+                    }
                 }
             }
         }

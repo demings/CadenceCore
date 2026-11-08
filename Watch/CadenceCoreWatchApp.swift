@@ -30,6 +30,14 @@ struct CadenceCoreWatchApp: App {
                                 let telemetryFresh = linkFresh && (snapshot.telemetryDate.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
                                 Text(telemetryFresh ? snapshot.power.map { "\($0) W measured" } ?? "Power unavailable" : "Power unavailable / stale")
                                 Text(telemetryFresh ? snapshot.cadence.map { "\(Int($0.rounded())) rpm" } ?? "Cadence unavailable" : "Cadence unavailable / stale")
+                                if let simulation = snapshot.simulation {
+                                    let simulationFresh = linkFresh && snapshot.state == "running" &&
+                                        (simulation.date.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
+                                    Text(simulationFresh
+                                         ? simulation.speed.map { "\(($0 * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h simulated" } ?? "Simulated speed unavailable"
+                                         : "Simulated speed unavailable / paused")
+                                    Text("\((simulation.distance / 1000).formatted(.number.precision(.fractionLength(2)))) km simulated")
+                                }
                                 if let interval = snapshot.interval, let remaining = snapshot.remaining {
                                     Text("Interval \(interval) · \(Int(ceil(remaining))) sec left").font(.caption)
                                 }
@@ -63,6 +71,10 @@ struct CadenceCoreWatchApp: App {
                                 .disabled(workout.starting)
                             Text("iPhone must stay connected to the trainer. Recorded on Watch and saved to Health.")
                                 .font(.caption2)
+                            if let simulation = staged.simulation {
+                                Text("Flat-road estimates · \(simulation.riderMass.formatted()) kg rider. Simulated Health speed/distance \(simulation.saveToHealth ? "on" : "off").")
+                                    .font(.caption2)
+                            }
                         } else {
                             Text("Open a workout on iPhone and choose Send to Watch.").font(.caption)
                         }
@@ -130,10 +142,14 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
         defer { starting = false }
         do {
             if let descriptor, !descriptor.isValid { throw RideLinkError.invalidMessage }
-            let share: Set<HKSampleType> = [
+            var share: Set<HKSampleType> = [
                 HKObjectType.workoutType(), HKQuantityType(.cyclingPower), HKQuantityType(.cyclingCadence),
                 HKQuantityType(.activeEnergyBurned)
             ]
+            if descriptor?.simulation?.saveToHealth == true {
+                share.insert(HKQuantityType(.cyclingSpeed))
+                share.insert(HKQuantityType(.distanceCycling))
+            }
             try await store.requestAuthorization(toShare: share, read: [HKQuantityType(.heartRate)])
             if descriptor != nil, store.authorizationStatus(for: HKObjectType.workoutType()) != .sharingAuthorized {
                 status = "Allow CadenceCore to save workouts in Health settings before starting."
@@ -159,6 +175,11 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                 ].filter { store.authorizationStatus(for: $0.0) != .sharingAuthorized }.map(\.1)
                 if !unavailable.isEmpty {
                     recordingError = "Health sharing is not enabled for \(unavailable.joined(separator: ", ")); the saved workout may omit these metrics."
+                }
+                if descriptor?.simulation?.saveToHealth == true,
+                   (store.authorizationStatus(for: HKQuantityType(.cyclingSpeed)) != .sharingAuthorized ||
+                    store.authorizationStatus(for: HKQuantityType(.distanceCycling)) != .sharingAuthorized) {
+                    recordingError = [recordingError, "Simulated speed/distance sharing is not fully enabled in Health."].compactMap { $0 }.joined(separator: " ")
                 }
             }
             finishing = false
@@ -269,6 +290,10 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             guard message.action == .snapshot, let update = message.snapshot,
                   let descriptor = ride, update.elapsed <= descriptor.duration else { throw RideLinkError.invalidMessage }
             guard update.sequence > lastSequence, let session, let builder else { return }
+            guard update.simulation == nil || descriptor.simulation != nil,
+                  (update.simulation?.distance ?? 0) >= (snapshot?.simulation?.distance ?? 0) else {
+                throw RideLinkError.invalidMessage
+            }
             lastSequence = update.sequence
             snapshot = update
             lastSnapshotDate = Date()
@@ -300,6 +325,13 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                             "CadenceCoreFTP": ride.ftp,
                             "CadenceCoreTrainerMetrics": "Measured FTMS power and cadence"
                         ])
+                        if let model = ride.simulation, model.saveToHealth {
+                            try await builder.addMetadata([
+                                "CadenceCoreSimulationModel": "Flat-road steady-state v\(model.version)",
+                                "CadenceCoreSimulationParameters": String(decoding: JSONEncoder().encode(model), as: UTF8.self),
+                                "CadenceCoreDistanceProvenance": "Simulated from measured FTMS power; aggregate active fresh-telemetry distance. No GPS."
+                            ])
+                        }
                     }
                 } else if !recordingRunning {
                     session.resume()
@@ -325,9 +357,18 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                         quantity: HKQuantity(unit: HKUnit.count().unitDivided(by: .minute()), doubleValue: cadence),
                         start: window.start, end: window.end))
                 }
+                if descriptor.simulation?.saveToHealth == true,
+                   let simulated = update.simulation, let speed = simulated.speed,
+                   let date = simulated.date, abs(date.timeIntervalSince(window.end)) <= 0.1,
+                   store.authorizationStatus(for: HKQuantityType(.cyclingSpeed)) == .sharingAuthorized {
+                    quantities.append(HKQuantitySample(type: HKQuantityType(.cyclingSpeed),
+                        quantity: HKQuantity(unit: HKUnit.meter().unitDivided(by: .second()), doubleValue: speed),
+                        start: window.start, end: window.end,
+                        metadata: ["CadenceCoreSimulated": true]))
+                }
                 if !quantities.isEmpty {
                     do { try await builder.addSamples(quantities) }
-                    catch { recordingError = "Trainer metrics were not recorded: \(error.localizedDescription)" }
+                    catch { recordingError = "Trainer/simulated metrics were not recorded: \(error.localizedDescription)" }
                 }
             }
             if update.state == "completed" { await finishRecording(confirmedTrainerStop: true) }
@@ -368,13 +409,28 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
         do {
             if collectionStart != nil {
                 try await builder.addMetadata(["CadenceCoreTrainerStopConfirmed": confirmedTrainerStop])
+                if let start = collectionStart, ride.simulation?.saveToHealth == true,
+                   let distance = snapshot?.simulation?.distance,
+                   store.authorizationStatus(for: HKQuantityType(.distanceCycling)) == .sharingAuthorized {
+                    // One aggregate sample preserves the iPhone total even when mirrored speed packets are lost.
+                    do {
+                        try await builder.addSamples([HKQuantitySample(type: HKQuantityType(.distanceCycling),
+                            quantity: HKQuantity(unit: .meter(), doubleValue: distance), start: start, end: end,
+                            metadata: ["CadenceCoreSimulated": true, "CadenceCoreAggregateDistance": true])])
+                    } catch {
+                        recordingError = "Simulated distance was not recorded: \(error.localizedDescription)"
+                    }
+                }
                 try await builder.endCollection(at: end)
                 guard let saved = try await builder.finishWorkout() else {
                     throw RideLinkError.noSavedWorkout
                 }
                 status = "Saved to Health."
                 if !confirmedTrainerStop { status += " Trainer stop was NOT confirmed." }
-                if recordingError != nil { status += " Some trainer metrics were not recorded." }
+                if recordingError != nil { status += " Some metrics were not recorded; see the warning." }
+                if let distance = snapshot?.simulation?.distance, ride.simulation?.saveToHealth == true {
+                    status += " \((distance / 1000).formatted(.number.precision(.fractionLength(2)))) km simulated (Health inclusion depends on permission/save result)."
+                }
                 UserDefaults.standard.set(status, forKey: "lastHealthSaveStatus")
                 deliverReceipt(RideMessage(rideID: ride.id, action: .saved,
                     detail: "\(status) Health workout \(saved.uuid.uuidString)."))
