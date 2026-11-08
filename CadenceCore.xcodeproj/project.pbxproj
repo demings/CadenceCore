@@ -1,0 +1,441 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591285974FAF0BE679956250 /* CadenceCoreApp.swift */; };
+		22FBB03FBBD9C8A00F84FCCD /* FTMS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020DF8EAE92CA3EEC350443D /* FTMS.swift */; };
+		47A8AD7FDE2849AE6286FF17 /* CadenceCoreWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC7AE1EBBABD95FD5140DED5 /* CadenceCoreWatchApp.swift */; };
+		500DE93984924055CBBA02E8 /* CadenceCoreWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = A87D541A3F65812B8DF5D91D /* CadenceCoreWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		972B1A1F672E2CF1733468BF /* TrainerDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */; };
+		9A8C7264B90FF542D77D91CA /* DiagnosticSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61973293AC42E239ADE7F8E5 /* DiagnosticSchedule.swift */; };
+		E2DE7E44731D38274214C81B /* WatchMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AA486D0F269A24C5FB4D98F /* WatchMirror.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		87E38E3E88F50ADF67701962 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9D01DFC24389CE8051DD9DD2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 967EDAFF1270B16EDE3DE1CA;
+			remoteInfo = CadenceCoreWatch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EAA66145E2E846EA5E954E41 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				500DE93984924055CBBA02E8 /* CadenceCoreWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		020DF8EAE92CA3EEC350443D /* FTMS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTMS.swift; sourceTree = "<group>"; };
+		2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerDiagnostic.swift; sourceTree = "<group>"; };
+		591285974FAF0BE679956250 /* CadenceCoreApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CadenceCoreApp.swift; sourceTree = "<group>"; };
+		61973293AC42E239ADE7F8E5 /* DiagnosticSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticSchedule.swift; sourceTree = "<group>"; };
+		8AA486D0F269A24C5FB4D98F /* WatchMirror.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMirror.swift; sourceTree = "<group>"; };
+		A87D541A3F65812B8DF5D91D /* CadenceCoreWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CadenceCoreWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BC7AE1EBBABD95FD5140DED5 /* CadenceCoreWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CadenceCoreWatchApp.swift; sourceTree = "<group>"; };
+		E4B2BFE8512709976D567E4F /* CadenceCore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CadenceCore.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		062A5CDE8ECB6BD3AA3AC022 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E4B2BFE8512709976D567E4F /* CadenceCore.app */,
+				A87D541A3F65812B8DF5D91D /* CadenceCoreWatch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D0A083AD47BB1AA36F285C91 /* Watch */ = {
+			isa = PBXGroup;
+			children = (
+				BC7AE1EBBABD95FD5140DED5 /* CadenceCoreWatchApp.swift */,
+			);
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		E52A643E803AE0A09C13FD73 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				61973293AC42E239ADE7F8E5 /* DiagnosticSchedule.swift */,
+				020DF8EAE92CA3EEC350443D /* FTMS.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		EC2CB25F6A3813A20B830F3E = {
+			isa = PBXGroup;
+			children = (
+				EEEED3DDED4A2D53FE7FC89E /* iPhone */,
+				E52A643E803AE0A09C13FD73 /* Shared */,
+				D0A083AD47BB1AA36F285C91 /* Watch */,
+				062A5CDE8ECB6BD3AA3AC022 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EEEED3DDED4A2D53FE7FC89E /* iPhone */ = {
+			isa = PBXGroup;
+			children = (
+				591285974FAF0BE679956250 /* CadenceCoreApp.swift */,
+				2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */,
+				8AA486D0F269A24C5FB4D98F /* WatchMirror.swift */,
+			);
+			path = iPhone;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9059921AE7864AC95E9B666A /* CadenceCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A133416944F4A35ABC7391BB /* Build configuration list for PBXNativeTarget "CadenceCore" */;
+			buildPhases = (
+				B0BFE9444A6CE32A25B63155 /* Sources */,
+				EAA66145E2E846EA5E954E41 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				793101CA439AB92CFE29933F /* PBXTargetDependency */,
+			);
+			name = CadenceCore;
+			packageProductDependencies = (
+			);
+			productName = CadenceCore;
+			productReference = E4B2BFE8512709976D567E4F /* CadenceCore.app */;
+			productType = "com.apple.product-type.application";
+		};
+		967EDAFF1270B16EDE3DE1CA /* CadenceCoreWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A330556CC77DE44249842806 /* Build configuration list for PBXNativeTarget "CadenceCoreWatch" */;
+			buildPhases = (
+				C932B88DAD9724558475F9D0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CadenceCoreWatch;
+			packageProductDependencies = (
+			);
+			productName = CadenceCoreWatch;
+			productReference = A87D541A3F65812B8DF5D91D /* CadenceCoreWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9D01DFC24389CE8051DD9DD2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2720;
+				TargetAttributes = {
+					9059921AE7864AC95E9B666A = {
+						ProvisioningStyle = Automatic;
+					};
+					967EDAFF1270B16EDE3DE1CA = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 13D898CF9B6A36BE0902E80E /* Build configuration list for PBXProject "CadenceCore" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = EC2CB25F6A3813A20B830F3E;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 062A5CDE8ECB6BD3AA3AC022 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9059921AE7864AC95E9B666A /* CadenceCore */,
+				967EDAFF1270B16EDE3DE1CA /* CadenceCoreWatch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B0BFE9444A6CE32A25B63155 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */,
+				9A8C7264B90FF542D77D91CA /* DiagnosticSchedule.swift in Sources */,
+				22FBB03FBBD9C8A00F84FCCD /* FTMS.swift in Sources */,
+				972B1A1F672E2CF1733468BF /* TrainerDiagnostic.swift in Sources */,
+				E2DE7E44731D38274214C81B /* WatchMirror.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C932B88DAD9724558475F9D0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				47A8AD7FDE2849AE6286FF17 /* CadenceCoreWatchApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		793101CA439AB92CFE29933F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 967EDAFF1270B16EDE3DE1CA /* CadenceCoreWatch */;
+			targetProxy = 87E38E3E88F50ADF67701962 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		13DBAB3AE16D6E94CD7D5296 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/Watch.entitlements;
+				INFOPLIST_FILE = "Configuration/Watch-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = CadenceCore;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cadencecore.personal.watch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		248CA0C84AA042FC36F52A38 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/iPhone.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Configuration/iPhone-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = CadenceCore;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cadencecore.personal;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		91403484747E072EDCA7757B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = F9DYZYCFPF;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Debug;
+		};
+		B68E731CD6DE6E781DEC0F70 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/iPhone.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Configuration/iPhone-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = CadenceCore;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cadencecore.personal;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		DEE8AE3B51AC1D24A17A188B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Configuration/Watch.entitlements;
+				INFOPLIST_FILE = "Configuration/Watch-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = CadenceCore;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cadencecore.personal.watch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		DF5CFFC0C9F9CA16C581D1A2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = F9DYZYCFPF;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		13D898CF9B6A36BE0902E80E /* Build configuration list for PBXProject "CadenceCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				91403484747E072EDCA7757B /* Debug */,
+				DF5CFFC0C9F9CA16C581D1A2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A133416944F4A35ABC7391BB /* Build configuration list for PBXNativeTarget "CadenceCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B68E731CD6DE6E781DEC0F70 /* Debug */,
+				248CA0C84AA042FC36F52A38 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A330556CC77DE44249842806 /* Build configuration list for PBXNativeTarget "CadenceCoreWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DEE8AE3B51AC1D24A17A188B /* Debug */,
+				13DBAB3AE16D6E94CD7D5296 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 9D01DFC24389CE8051DD9DD2 /* Project object */;
+}

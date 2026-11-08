@@ -1,0 +1,68 @@
+name: CadenceCore
+options:
+  bundleIdPrefix: com.cadencecore
+  deploymentTarget:
+    iOS: "18.0"
+    watchOS: "11.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: "0.1.0"
+targets:
+  CadenceCore:
+    type: application
+    platform: iOS
+    sources: [iPhone, Shared]
+    dependencies:
+      - target: CadenceCoreWatch
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cadencecore.personal
+        INFOPLIST_KEY_CFBundleDisplayName: CadenceCore
+        TARGETED_DEVICE_FAMILY: "1"
+    info:
+      path: Configuration/iPhone-Info.plist
+      properties:
+        NSBluetoothAlwaysUsageDescription: Connect to your indoor trainer to inspect telemetry and test ERG control.
+        NSHealthShareUsageDescription: Show live heart rate from your CadenceCore Watch workout.
+        NSHealthUpdateUsageDescription: Coordinate your indoor cycling workout with Apple Watch.
+        UIBackgroundModes: [bluetooth-central]
+        UILaunchScreen: {}
+    entitlements:
+      path: Configuration/iPhone.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+  CadenceCoreWatch:
+    type: application
+    platform: watchOS
+    sources: [Watch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cadencecore.personal.watch
+        INFOPLIST_KEY_CFBundleDisplayName: CadenceCore
+    info:
+      path: Configuration/Watch-Info.plist
+      properties:
+        WKCompanionAppBundleIdentifier: com.cadencecore.personal
+        WKApplication: true
+        WKBackgroundModes: [workout-processing]
+        NSHealthShareUsageDescription: Measure your heart rate during an indoor cycling diagnostic.
+        NSHealthUpdateUsageDescription: Run a diagnostic cycling session; diagnostic sessions are discarded, not saved.
+    entitlements:
+      path: Configuration/Watch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+schemes:
+  CadenceCore:
+    build:
+      targets:
+        CadenceCore: all
+        CadenceCoreWatch: all
+  CadenceCoreWatch:
+    build:
+      targets:
+        CadenceCoreWatch: all
