@@ -1,8 +1,22 @@
 # CadenceCore
 
-Native iPhone + Apple Watch ERG training app, currently at the **hardware diagnostic milestone**.
+Native iPhone + Apple Watch ERG training app, currently with **hardware diagnostics and a basic workout library/preview**.
 
-The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. Those product features are **not implemented yet**. This first build establishes whether the actual KICKR CORE 2 supports the required Bluetooth control and background behavior.
+The planned product has Watch-first controls and Health recording, iPhone trainer control, a ZWO workout library, FTP-based targets, advisory cadence guidance, and manual Strava file export. The library/import/preview is implemented; **full workout playback, cadence guidance, Health saving, simulated speed/distance, and Strava export are not implemented yet**. Diagnostics establish the actual KICKR CORE 2 control and background behavior.
+
+## Workout library
+
+The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Enter your FTP (1–2000 W) to see interval watt targets alongside % FTP, a power-profile chart, and a full interval-list alternative. This is a preview, not a Start-workout screen; trainer diagnostics remain in their separate tab.
+
+Supported UTF-8 cycling ZWO blocks:
+
+- `SteadyState`: `Duration`, `Power`, optional `Cadence`.
+- `Warmup`, `Cooldown`, `Ramp`: `Duration`, `PowerLow` (start), `PowerHigh` (end), optional `Cadence`.
+- `IntervalsT`: integer `Repeat`, `OnDuration`, `OffDuration`, `OnPower`, `OffPower`; optional `Cadence` for work phases and `CadenceResting` for recovery. Work cadence is not copied to recovery.
+
+Power values are fractions of FTP, from 0 to 3. Durations must be 0.1 seconds or greater. Limits: 1 MiB input, six hours expanded duration, 2000 expanded intervals, 1000 repetitions per block, 16 XML nesting levels, cadence 1–250 rpm. DTD/entity declarations, non-cycling sports, unsupported executable blocks and behavior-changing attributes are rejected explicitly. Metadata is retained for name/description; unknown top-level metadata produces warnings. Text cues and unsupported cadence attributes currently generate visible preview warnings rather than being silently interpreted.
+
+Imports retain their original source bytes locally. Import/persistence errors are visible and failed mutations roll back. No in-app interval editor or calendar is included.
 
 ## What this build does
 
@@ -17,7 +31,7 @@ The planned product has Watch-first controls and Health recording, iPhone traine
 - Shows missing/stale trainer measurements after three seconds and HR after ten seconds.
 - Saves a bounded, millisecond-timestamped diagnostic log locally, restores it at launch, and exports it using the share sheet. During the background test, measured power/cadence are logged every 15 seconds with monotonic elapsed time. Log files are writable after the first device unlock, including while subsequently locked. No heart-rate samples are written to that log.
 
-Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. No workout import, cadence coaching, history recording, or Strava integration is available yet.
+Diagnostic Watch sessions are **discarded**, not saved to Health/Fitness. No full workout playback, cadence coaching, history recording, or Strava integration is available yet.
 
 ## Build
 
@@ -62,7 +76,7 @@ If you regenerate after selecting your team, XcodeGen can remove manually edited
 
 **Limits:** The test depends on ongoing trainer telemetry. If notifications stop, the app is force-quit, the phone shuts down, or the connection is lost, continued control and reduced-load/stop delivery cannot be guaranteed. The trainer may keep its last ERG target. A reconnect does not automatically resume the test. Even if 0 W succeeds and stop fails, the UI reports unconfirmed state rather than a completed stop. Stop pedaling if you need to end the ride; this diagnostic is not a safety interlock.
 
-Only after the actual-device gate passes should the full workout engine, ZWO library, coordinated Watch controls, Health saves, and cadence guidance be built.
+The short locked-screen stage/automatic-finish test has passed on the user's trainer; longer continuity/interruption testing remains outstanding. Library/import development can proceed independently, but full workout operation must still pass end-to-end device acceptance.
 
 ## Strava
 

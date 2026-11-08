@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000001 /* Workout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000003 /* Workout.swift */; };
+		CC0000000000000000000002 /* ZWOImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000004 /* ZWOImporter.swift */; };
 		09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591285974FAF0BE679956250 /* CadenceCoreApp.swift */; };
 		22FBB03FBBD9C8A00F84FCCD /* FTMS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 020DF8EAE92CA3EEC350443D /* FTMS.swift */; };
 		47A8AD7FDE2849AE6286FF17 /* CadenceCoreWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC7AE1EBBABD95FD5140DED5 /* CadenceCoreWatchApp.swift */; };
@@ -41,6 +43,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000003 /* Workout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workout.swift; sourceTree = "<group>"; };
+		CC0000000000000000000004 /* ZWOImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZWOImporter.swift; sourceTree = "<group>"; };
 		020DF8EAE92CA3EEC350443D /* FTMS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTMS.swift; sourceTree = "<group>"; };
 		2B8FC14A51330E03C31ADAEE /* TrainerDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerDiagnostic.swift; sourceTree = "<group>"; };
 		591285974FAF0BE679956250 /* CadenceCoreApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CadenceCoreApp.swift; sourceTree = "<group>"; };
@@ -72,6 +76,8 @@
 		E52A643E803AE0A09C13FD73 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000003 /* Workout.swift */,
+				CC0000000000000000000004 /* ZWOImporter.swift */,
 				61973293AC42E239ADE7F8E5 /* DiagnosticSchedule.swift */,
 				020DF8EAE92CA3EEC350443D /* FTMS.swift */,
 			);
@@ -179,6 +185,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000001 /* Workout.swift in Sources */,
+				CC0000000000000000000002 /* ZWOImporter.swift in Sources */,
 				09ADCBFC09B67317B00F9B53 /* CadenceCoreApp.swift in Sources */,
 				9A8C7264B90FF542D77D91CA /* DiagnosticSchedule.swift in Sources */,
 				22FBB03FBBD9C8A00F84FCCD /* FTMS.swift in Sources */,

@@ -1,4 +1,7 @@
 import SwiftUI
+import SwiftData
+import UniformTypeIdentifiers
+import Charts
 
 @main
 struct CadenceCoreApp: App {
@@ -7,10 +10,219 @@ struct CadenceCoreApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                DiagnosticView(trainer: trainer, watch: watch)
+            TabView {
+                NavigationStack { WorkoutLibraryView() }
+                    .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
+                NavigationStack { DiagnosticView(trainer: trainer, watch: watch) }
+                    .tabItem { Label("Diagnostics", systemImage: "wrench.and.screwdriver") }
             }
             .tint(.teal)
+        }
+        .modelContainer(for: SavedWorkout.self)
+    }
+
+    struct WorkoutLibraryView: View {
+        @Environment(\.modelContext) private var context
+        @Query(sort: \SavedWorkout.createdAt, order: .reverse) private var workouts: [SavedWorkout]
+        @AppStorage("ftpWatts") private var ftp = ""
+        @State private var importing = false
+        @State private var errorMessage: String?
+
+        var body: some View {
+            List {
+                Section("Your FTP") {
+                    TextField("FTP in watts", text: $ftp).keyboardType(.numberPad)
+                    if let value = Double(ftp), value.isFinite, (1...2000).contains(value) {
+                        Text("Preview targets use \(Int(value)) W FTP.").font(.caption)
+                    } else {
+                        Text("Enter FTP from 1–2000 W to preview watt targets. No default is assumed.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                Section {
+                    Text("Import and preview workouts. Full ERG playback is not available yet; use Diagnostics for the hardware test.")
+                        .font(.footnote)
+                    Button("Import ZWO", systemImage: "square.and.arrow.down") { importing = true }
+                    Button("Add original example", systemImage: "plus") { save(.sample, source: nil) }
+                }
+                Section("Library") {
+                    if workouts.isEmpty {
+                        ContentUnavailableView("No workouts yet", systemImage: "bicycle",
+                                               description: Text("Import a cycling ZWO file or add the original example."))
+                    }
+                    ForEach(workouts) { saved in
+                        NavigationLink {
+                            WorkoutPreviewView(saved: saved, ftpText: ftp)
+                        } label: {
+                            HStack {
+                                if saved.favorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
+                                Text(saved.name)
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button(saved.favorite ? "Unfavorite" : "Favorite") {
+                                saved.favorite.toggle()
+                                persist()
+                            }.tint(.orange)
+                        }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) {
+                                context.delete(saved)
+                                persist()
+                            }
+                            Button("Duplicate") {
+                                do {
+                                    var workout = try JSONDecoder().decode(Workout.self, from: saved.encodedWorkout)
+                                    workout.name = saved.name + " copy"
+                                    save(workout, source: saved.source)
+                                } catch { errorMessage = error.localizedDescription }
+                            }.tint(.teal)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Workouts")
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
+                do {
+                    let url = try result.get()
+                    guard url.pathExtension.lowercased() == "zwo" else {
+                        throw WorkoutImportError.invalid("choose a .zwo file.")
+                    }
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    let handle = try FileHandle(forReadingFrom: url)
+                    let data: Data
+                    do {
+                        data = try handle.read(upToCount: ZWOImporter.maximumFileBytes + 1) ?? Data()
+                    } catch {
+                        try handle.close()
+                        throw error
+                    }
+                    try handle.close()
+                    save(try ZWOImporter.parse(data), source: data)
+                } catch { errorMessage = error.localizedDescription }
+            }
+            .alert("Workout library error", isPresented: Binding(
+                get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK") { errorMessage = nil }
+            } message: { Text(errorMessage ?? "") }
+        }
+
+        private func save(_ workout: Workout, source: Data?) {
+            do {
+                context.insert(try SavedWorkout(workout: workout, source: source))
+                try context.save()
+            } catch {
+                context.rollback()
+                errorMessage = "Workout was not saved: \(error.localizedDescription)"
+            }
+        }
+
+        private func persist() {
+            do { try context.save() }
+            catch {
+                context.rollback()
+                errorMessage = "Library change was not saved: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    struct WorkoutPreviewView: View {
+        @Bindable var saved: SavedWorkout
+        let ftpText: String
+        @Environment(\.modelContext) private var context
+        @State private var workout: Workout?
+        @State private var errorMessage: String?
+        @State private var editingName = ""
+        @State private var renaming = false
+
+        private var ftp: Double? {
+            guard let value = Double(ftpText), value.isFinite, (1...2000).contains(value) else { return nil }
+            return value
+        }
+
+        private struct ProfilePoint: Identifiable {
+            let id: Int
+            let minutes: Double
+            let percent: Double
+        }
+
+        private func profile(_ workout: Workout) -> [ProfilePoint] {
+            var elapsed: Double = 0
+            return workout.intervals.enumerated().flatMap { index, interval in
+                let start = elapsed
+                elapsed += interval.duration
+                return [
+                    ProfilePoint(id: index * 2, minutes: start / 60, percent: interval.startPower * 100),
+                    ProfilePoint(id: index * 2 + 1, minutes: elapsed / 60, percent: interval.endPower * 100)
+                ]
+            }
+        }
+
+        var body: some View {
+            List {
+                if let workout {
+                    Section {
+                        Text(workout.description)
+                        LabeledContent("Duration", value: "\(Int(workout.duration / 60)) min \(Int(workout.duration) % 60) sec")
+                        Text("Preview only—Start workout will be added after the workout engine is implemented.")
+                            .font(.footnote)
+                    }
+                    Section("Workout profile (% FTP)") {
+                        Chart(profile(workout)) { point in
+                            AreaMark(x: .value("Minutes", point.minutes), y: .value("% FTP", point.percent))
+                                .foregroundStyle(.teal.opacity(0.25))
+                            LineMark(x: .value("Minutes", point.minutes), y: .value("% FTP", point.percent))
+                                .foregroundStyle(.teal)
+                        }
+                        .frame(height: 160)
+                        .accessibilityLabel("Workout power profile. Full interval values are listed below.")
+                    }
+                    if !workout.warnings.isEmpty {
+                        Section("Import warnings") {
+                            ForEach(workout.warnings, id: \.self) { Text($0).foregroundStyle(.orange) }
+                        }
+                    }
+                    Section("Intervals") {
+                        ForEach(Array(workout.intervals.enumerated()), id: \.offset) { index, interval in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(index + 1). \(interval.duration.formatted(.number.precision(.fractionLength(0...1)))) seconds").font(.headline)
+                                Text("\(Int((interval.startPower * 100).rounded()))–\(Int((interval.endPower * 100).rounded()))% FTP")
+                                if let ftp {
+                                    Text("\(Int((interval.startPower * ftp).rounded()))–\(Int((interval.endPower * ftp).rounded())) W")
+                                }
+                                if let cadence = interval.cadence { Text("Workout cadence: \(Int(cadence)) rpm") }
+                            }.monospacedDigit()
+                        }
+                    }
+                } else if let errorMessage {
+                    ContentUnavailableView("Cannot read workout", systemImage: "exclamationmark.triangle",
+                                           description: Text(errorMessage))
+                }
+            }
+            .navigationTitle(saved.name)
+            .toolbar {
+                Button("Rename") { editingName = saved.name; renaming = true }
+            }
+            .task {
+                do { workout = try JSONDecoder().decode(Workout.self, from: saved.encodedWorkout) }
+                catch { errorMessage = error.localizedDescription }
+            }
+            .alert("Rename workout", isPresented: $renaming) {
+                TextField("Name", text: $editingName)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let name = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { errorMessage = "Workout name cannot be empty."; return }
+                    saved.name = name
+                    do { try context.save() }
+                    catch { context.rollback(); errorMessage = error.localizedDescription }
+                }
+            }
+            .alert("Workout error", isPresented: Binding(
+                get: { workout != nil && errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK") { errorMessage = nil } } message: { Text(errorMessage ?? "") }
         }
     }
 }
