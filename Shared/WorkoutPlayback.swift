@@ -1,5 +1,25 @@
 import Foundation
 
+public enum TrainerReadiness {
+    public enum Issue: String, Sendable {
+        case disconnected = "Connect your trainer"
+        case capabilities = "Waiting for verified ERG capabilities"
+        case control = "Trainer control is not granted"
+        case busy = "Waiting for trainer acknowledgment"
+        case telemetry = "Pedal briefly for fresh trainer measurements"
+    }
+
+    public static func issue(connected: Bool, capabilitiesReady: Bool, hasControl: Bool,
+                             busy: Bool, sampleDate: Date?, now: Date = Date()) -> Issue? {
+        guard connected else { return .disconnected }
+        guard capabilitiesReady else { return .capabilities }
+        guard hasControl else { return .control }
+        guard !busy else { return .busy }
+        guard let sampleDate, (0...3).contains(now.timeIntervalSince(sampleDate)) else { return .telemetry }
+        return nil
+    }
+}
+
 public struct WorkoutPlayback: Sendable {
     public enum State: String, Sendable {
         case ready, settingTarget, starting, running, pausing, paused, finishing, completed, interrupted

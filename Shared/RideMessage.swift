@@ -1,5 +1,20 @@
 import Foundation
 
+public enum WatchStartPhase: String, Sendable {
+    case authorization = "Health permissions"
+    case creating = "Creating Watch session"
+    case preparing = "Preparing Watch session"
+    case mirroring = "Connecting to iPhone"
+    case requesting = "Requesting trainer start"
+    case collecting = "Starting Health recording"
+    case recording = "Watch Health session"
+
+    public func failure(_ error: Error) -> String {
+        let detail = error as NSError
+        return "\(rawValue) failed: \(detail.localizedDescription) [\(detail.domain):\(detail.code)]. End any active workout in Apple's Workout or CadenceCore, keep iPhone nearby, and retry. If this persists, share this error detail."
+    }
+}
+
 public enum RideAction: String, Codable, Sendable {
     case ready, heartbeat, pause, resume, finish, heartRate, snapshot, saved, failure
 }

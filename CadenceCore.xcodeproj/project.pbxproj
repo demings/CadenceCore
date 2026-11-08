@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CC0000000000000000000053 /* RideConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000054; };
+		CC0000000000000000000051 /* RideSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000052; };
 		CC0000000000000000000041 /* RideSimulation.swift in iPhone Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000043; };
 		CC0000000000000000000042 /* RideSimulation.swift in Watch Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000043; };
 		CC0000000000000000000044 /* SimulationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000045; };
@@ -51,6 +53,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CC0000000000000000000054 /* RideConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideConfiguration.swift; sourceTree = "<group>"; };
+		CC0000000000000000000052 /* RideSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSetupView.swift; sourceTree = "<group>"; };
 		CC0000000000000000000043 /* RideSimulation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideSimulation.swift; sourceTree = "<group>"; };
 		CC0000000000000000000045 /* SimulationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulationSettingsView.swift; sourceTree = "<group>"; };
 		CC0000000000000000000033 /* RideMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RideMessage.swift; sourceTree = "<group>"; };
@@ -115,6 +119,8 @@
 		EEEED3DDED4A2D53FE7FC89E /* iPhone */ = {
 			isa = PBXGroup;
 			children = (
+				CC0000000000000000000054 /* RideConfiguration.swift */,
+				CC0000000000000000000052 /* RideSetupView.swift */,
 				CC0000000000000000000045 /* SimulationSettingsView.swift */,
 				CC0000000000000000000013 /* Assets.xcassets */,
 				591285974FAF0BE679956250 /* CadenceCoreApp.swift */,
@@ -222,6 +228,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CC0000000000000000000053 /* RideConfiguration.swift in Sources */,
+				CC0000000000000000000051 /* RideSetupView.swift in Sources */,
 				CC0000000000000000000041 /* RideSimulation.swift in iPhone Sources */,
 				CC0000000000000000000044 /* SimulationSettingsView.swift in Sources */,
 				CC0000000000000000000031 /* RideMessage.swift in iPhone Sources */,

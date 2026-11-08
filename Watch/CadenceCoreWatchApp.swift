@@ -8,6 +8,7 @@ struct CadenceCoreWatchApp: App {
     @State private var workout = WatchWorkout()
     @State private var confirmFinish = false
     @State private var confirmLocalEnd = false
+    @State private var showingDiagnostics = false
 
     var body: some Scene {
         WindowGroup {
@@ -16,35 +17,10 @@ struct CadenceCoreWatchApp: App {
                     Text("CadenceCore").font(.headline)
                     Text(workout.status).font(.caption)
                     if let issue = workout.recordingError { Text(issue).font(.caption).foregroundStyle(.orange) }
-                    if workout.active {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let fresh = workout.sampleDate.map { context.date.timeIntervalSince($0) <= 10 } ?? false
-                            Text(fresh ? workout.heartRate.map { "\(Int($0.rounded())) bpm" } ?? "Waiting for HR" : "HR unavailable")
-                                .font(.title2.monospacedDigit())
-                            if let snapshot = workout.snapshot {
-                                let linkFresh = workout.lastSnapshotDate.map { context.date.timeIntervalSince($0) <= 8 } ?? false
-                                Text(linkFresh ? snapshot.state.capitalized : "iPhone disconnected").font(.headline)
-                                Text("\(Int(snapshot.elapsed) / 60):\(String(format: "%02d", Int(snapshot.elapsed) % 60))")
-                                    .font(.title2.monospacedDigit())
-                                if let target = snapshot.target { Text("Scheduled \(target) W") }
-                                let telemetryFresh = linkFresh && (snapshot.telemetryDate.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
-                                Text(telemetryFresh ? snapshot.power.map { "\($0) W measured" } ?? "Power unavailable" : "Power unavailable / stale")
-                                Text(telemetryFresh ? snapshot.cadence.map { "\(Int($0.rounded())) rpm" } ?? "Cadence unavailable" : "Cadence unavailable / stale")
-                                if let simulation = snapshot.simulation {
-                                    let simulationFresh = linkFresh && snapshot.state == "running" &&
-                                        (simulation.date.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
-                                    Text(simulationFresh
-                                         ? simulation.speed.map { "\(($0 * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h simulated" } ?? "Simulated speed unavailable"
-                                         : "Simulated speed unavailable / paused")
-                                    Text("\((simulation.distance / 1000).formatted(.number.precision(.fractionLength(2)))) km simulated")
-                                }
-                                if let interval = snapshot.interval, let remaining = snapshot.remaining {
-                                    Text("Interval \(interval) · \(Int(ceil(remaining))) sec left").font(.caption)
-                                }
-                            }
-                        }
-                    }
-                    if workout.active, workout.ride != nil {
+                    if workout.active { WatchRideMetrics(workout: workout) }
+                    if workout.starting {
+                        ProgressView("Preparing session…")
+                    } else if workout.active, workout.ride != nil {
                         if workout.snapshot?.state == "running" {
                             Button("Pause", systemImage: "pause.fill") { workout.control(.pause) }
                                 .disabled(workout.commandPending)
@@ -75,17 +51,28 @@ struct CadenceCoreWatchApp: App {
                                 Text("Flat-road estimates · \(simulation.riderMass.formatted()) kg rider. Simulated Health speed/distance \(simulation.saveToHealth ? "on" : "off").")
                                     .font(.caption2)
                             }
-                        } else {
-                            Text("Open a workout on iPhone and choose Send to Watch.").font(.caption)
                         }
-                        Button("Start HR diagnostic") { Task { await workout.start(nil) } }
-                            .disabled(workout.starting)
-                        Text("HR diagnostics are discarded.").font(.caption2)
+                        Button("Troubleshooting") { showingDiagnostics = true }
                     }
                 }
                 .padding()
             }
             .tint(.teal)
+            .sheet(isPresented: $showingDiagnostics) {
+                ScrollView {
+                    VStack(spacing: 12) {
+                        Text("Troubleshooting").font(.headline)
+                        Button("Start HR diagnostic") {
+                            showingDiagnostics = false
+                            Task { await workout.start(nil) }
+                        }
+                        Text("HR diagnostics are discarded; they do not record a ride.").font(.caption2)
+                        if let error = UserDefaults.standard.string(forKey: "lastSessionError") {
+                            Text(error).font(.caption2)
+                        }
+                    }.padding()
+                }
+            }
             .confirmationDialog("Finish workout and save to Health?", isPresented: $confirmFinish, titleVisibility: .visible) {
                 Button("Finish and save", role: .destructive) { workout.control(.finish) }
             } message: {
@@ -100,9 +87,44 @@ struct CadenceCoreWatchApp: App {
     }
 }
 
+private struct WatchRideMetrics: View {
+    @Bindable var workout: WatchWorkout
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            VStack(spacing: 8) {
+                let fresh = workout.sampleDate.map { context.date.timeIntervalSince($0) <= 10 } ?? false
+                Text(fresh ? workout.heartRate.map { "\(Int($0.rounded())) bpm" } ?? "Waiting for HR" : "HR unavailable")
+                    .font(.title2.monospacedDigit())
+                if let snapshot = workout.snapshot {
+                    let linkFresh = workout.lastSnapshotDate.map { context.date.timeIntervalSince($0) <= 8 } ?? false
+                    Text(linkFresh ? snapshot.state.capitalized : "iPhone disconnected").font(.headline)
+                    Text("\(Int(snapshot.elapsed) / 60):\(String(format: "%02d", Int(snapshot.elapsed) % 60))")
+                        .font(.title2.monospacedDigit())
+                    if let target = snapshot.target { Text("Scheduled \(target) W") }
+                    let telemetryFresh = linkFresh && (snapshot.telemetryDate.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
+                    Text(telemetryFresh ? snapshot.power.map { "\($0) W measured" } ?? "Power unavailable" : "Power unavailable / stale")
+                    Text(telemetryFresh ? snapshot.cadence.map { "\(Int($0.rounded())) rpm" } ?? "Cadence unavailable" : "Cadence unavailable / stale")
+                    if let simulation = snapshot.simulation {
+                        let simulationFresh = linkFresh && snapshot.state == "running" &&
+                            (simulation.date.map { context.date.timeIntervalSince($0) <= 3 } ?? false)
+                        Text(simulationFresh
+                             ? simulation.speed.map { "\(($0 * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h simulated" } ?? "Simulated speed unavailable"
+                             : "Simulated speed unavailable / paused")
+                        Text("\((simulation.distance / 1000).formatted(.number.precision(.fractionLength(2)))) km simulated")
+                    }
+                    if let interval = snapshot.interval, let remaining = snapshot.remaining {
+                        Text("Interval \(interval) · \(Int(ceil(remaining))) sec left").font(.caption)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @MainActor @Observable
 final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuilderDelegate, WCSessionDelegate {
-    var status = "Send a workout from iPhone, or enable diagnostic mirroring."
+    var status = "Choose a workout on iPhone, then Prepare ride on Watch."
     private(set) var active = false
     private(set) var starting = false
     private(set) var saving = false
@@ -128,6 +150,8 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     private var connectionStart: Date?
     private var recordingRunning = false
     private var mirrorDisconnected = false
+    private var ending = false
+    private var startPhase = WatchStartPhase.authorization
 
     override init() {
         super.init()
@@ -137,9 +161,10 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     }
 
     func start(_ descriptor: RideDescriptor?) async {
-        guard !active, !starting, !saving else { return }
+        guard !active, !starting, !saving, !ending else { return }
         starting = true
         defer { starting = false }
+        startPhase = .authorization
         do {
             if let descriptor, !descriptor.isValid { throw RideLinkError.invalidMessage }
             var share: Set<HKSampleType> = [
@@ -153,11 +178,14 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             try await store.requestAuthorization(toShare: share, read: [HKQuantityType(.heartRate)])
             if descriptor != nil, store.authorizationStatus(for: HKObjectType.workoutType()) != .sharingAuthorized {
                 status = "Allow CadenceCore to save workouts in Health settings before starting."
+                UserDefaults.standard.set(status, forKey: "lastSessionError")
+                reportToPhone(status)
                 return
             }
             let configuration = HKWorkoutConfiguration()
             configuration.activityType = .cycling
             configuration.locationType = .indoor
+            startPhase = .creating
             let session = try HKWorkoutSession(healthStore: store, configuration: configuration)
             let builder = session.associatedWorkoutBuilder()
             self.session = session
@@ -201,29 +229,66 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             builder.dataSource?.disableCollection(for: HKQuantityType(.cyclingSpeed))
             active = true
             if descriptor != nil {
+                startPhase = .preparing
                 session.prepare()
+                try await waitForState(.prepared, session: session)
             } else {
+                startPhase = .collecting
                 let date = Date()
                 session.startActivity(with: date)
                 try await builder.beginCollection(at: date)
                 collectionStart = date
                 recordingRunning = true
             }
+            startPhase = .mirroring
             try await session.startMirroringToCompanionDevice()
             if let descriptor {
+                startPhase = .requesting
                 status = "Waiting for iPhone trainer start…"
                 let ready = RideMessage(rideID: descriptor.id, action: .ready)
                 pendingCommand = ready
                 try await send(ready)
                 monitor()
             } else {
+                startPhase = .recording
                 status = "Measuring HR; diagnostic will be discarded."
             }
         } catch {
-            status = "Start failed: \(error.localizedDescription)"
-            session?.end()
+            let failure = startPhase.failure(error)
+            status = failure
+            UserDefaults.standard.set(failure, forKey: "lastSessionError")
+            if let session {
+                session.end()
+                do { try await waitForState(.ended, session: session) }
+                catch {
+                    status += " Cleanup incomplete: \(error.localizedDescription). Use End locally before starting again."
+                    linkStale = true
+                    reportToPhone(status)
+                    return
+                }
+            }
             builder?.discardWorkout()
             resetSession()
+            reportToPhone(failure)
+        }
+    }
+
+    private func waitForState(_ state: HKWorkoutSessionState, session: HKWorkoutSession) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 8
+        while session.state != state {
+            guard ProcessInfo.processInfo.systemUptime < deadline,
+                  state == .ended || session.state != .ended else {
+                throw NSError(domain: "CadenceCore.SessionLifecycle", code: state.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "Watch session did not reach \(state == .prepared ? "prepared" : "ended") within 8 seconds (current state \(session.state.rawValue))."])
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func reportToPhone(_ failure: String) {
+        guard WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage(["failure": failure, "stagedID": staged?.id.uuidString ?? ""], replyHandler: nil) { error in
+            Task { @MainActor in self.recordingError = "Error report delivery failed: \(error.localizedDescription)" }
         }
     }
 
@@ -275,13 +340,24 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
 
     private func receive(_ packet: Data) async {
         guard !mirrorDisconnected else { return }
+        var startingCollection = false
         do {
             let message = try RideMessage.decode(packet)
             guard active, message.rideID == ride?.id else { throw RideLinkError.invalidMessage }
             if message.action == .failure {
                 status = message.detail ?? "iPhone rejected workout start."
                 if collectionStart == nil {
-                    session?.end()
+                    heartbeat?.cancel()
+                    pendingCommand = nil
+                    linkStale = true
+                    startingCollection = true
+                    startPhase = .collecting
+                    if let session {
+                        session.end()
+                        try await waitForState(.ended, session: session)
+                    }
+                    startingCollection = false
+                    startPhase = .recording
                     builder?.discardWorkout()
                     resetSession()
                 } else if recordingRunning { session?.pause(); recordingRunning = false }
@@ -315,6 +391,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                     let date = message.date
                     session.startActivity(with: date)
                     try await builder.beginCollection(at: date)
+                    guard self.session === session, active else { return }
                     collectionStart = date
                     recordingRunning = true
                     if let ride {
@@ -337,6 +414,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                     session.resume()
                     recordingRunning = true
                 }
+                guard self.session === session, active else { return }
             } else if collectionStart != nil, ["pausing", "paused", "finishing", "interrupted"].contains(update.state),
                       recordingRunning {
                 session.pause()
@@ -373,7 +451,12 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             }
             if update.state == "completed" { await finishRecording(confirmedTrainerStop: true) }
         } catch {
-            recordingError = "Workout communication/recording failed: \(error.localizedDescription)"
+            recordingError = startingCollection ? WatchStartPhase.collecting.failure(error) :
+                "Workout communication/recording failed: \(error.localizedDescription) [\((error as NSError).domain):\((error as NSError).code)]"
+            if startingCollection {
+                UserDefaults.standard.set(recordingError, forKey: "lastSessionError")
+                reportToPhone(recordingError ?? "Health recording failed.")
+            }
             if recordingRunning { session?.pause(); recordingRunning = false }
             if let ride {
                 do { try await send(RideMessage(rideID: ride.id, action: .failure, detail: recordingError)) }
@@ -383,11 +466,19 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     }
 
     func endDiagnostic() {
-        guard ride == nil else { return }
-        session?.end()
-        builder?.discardWorkout()
-        resetSession()
-        status = "Ended. Diagnostic discarded."
+        guard ride == nil, !ending else { return }
+        ending = true
+        Task {
+            defer { ending = false }
+            if let session {
+                session.end()
+                do { try await waitForState(.ended, session: session) }
+                catch { status = "Diagnostic end unconfirmed: \(error.localizedDescription)"; return }
+            }
+            builder?.discardWorkout()
+            resetSession()
+            status = "Ended. Diagnostic discarded."
+        }
     }
 
     func endLocally() {
@@ -407,6 +498,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
         let end = Date()
         session.end()
         do {
+            try await waitForState(.ended, session: session)
             if collectionStart != nil {
                 try await builder.addMetadata(["CadenceCoreTrainerStopConfirmed": confirmedTrainerStop])
                 if let start = collectionStart, ride.simulation?.saveToHealth == true,
@@ -441,6 +533,14 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             }
             staged = nil
         } catch {
+            if session.state != .ended {
+                finishing = false
+                saving = false
+                linkStale = true
+                status = "Watch session has not ended: \(error.localizedDescription). Retry End locally; trainer stop is unconfirmed."
+                recordingError = status
+                return
+            }
             recordingError = "Health save failed: \(error.localizedDescription). No automatic retry to avoid duplicate saves."
             status = "Workout ended; save is unconfirmed."
             UserDefaults.standard.set("\(status) \(recordingError ?? "")", forKey: "lastHealthSaveStatus")
@@ -481,7 +581,19 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             guard descriptor.isValid else { throw RideLinkError.invalidMessage }
             staged = descriptor
             status = "Workout ready."
+            acknowledgeStage()
         } catch { status = "Invalid staged workout: \(error.localizedDescription)" }
+    }
+
+    private func acknowledgeStage() {
+        guard let staged, WCSession.default.isReachable, !active else { return }
+        WCSession.default.sendMessage(["stagedID": staged.id.uuidString], replyHandler: nil) { error in
+            Task { @MainActor in self.status = "Workout loaded; iPhone acknowledgment failed: \(error.localizedDescription)" }
+        }
+    }
+
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        Task { @MainActor in acknowledgeStage() }
     }
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
@@ -501,7 +613,7 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState,
                                     from fromState: HKWorkoutSessionState, date: Date) {
         Task { @MainActor in
-            guard session === workoutSession, !finishing else { return }
+            guard session === workoutSession, !finishing, !starting, !ending else { return }
             if toState == .paused, recordingRunning, ride != nil {
                 recordingRunning = false
                 control(.pause)
@@ -528,9 +640,12 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
     nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         Task { @MainActor in
             guard session === workoutSession else { return }
-            status = "Session failed: \(error.localizedDescription)"
+            status = (starting ? startPhase : .recording).failure(error)
+            UserDefaults.standard.set(status, forKey: "lastSessionError")
+            reportToPhone(status)
             recordingError = status
             linkStale = true
+            if starting { return }
             if let ride {
                 do { try await send(RideMessage(rideID: ride.id, action: .failure, detail: status)) }
                 catch { status += " iPhone notification failed: \(error.localizedDescription)" }
@@ -545,7 +660,10 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
             processing = Task {
                 await previous?.value
                 guard session === workoutSession else { return }
-                for packet in data { await receive(packet) }
+                for packet in data {
+                    guard session === workoutSession else { return }
+                    await receive(packet)
+                }
             }
         }
     }

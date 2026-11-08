@@ -23,7 +23,9 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
     private var lastState: String?
     private var watchdog: Task<Void, Never>?
     private var prepared = false
-    private var staging = false
+    private(set) var staging = false
+    private(set) var watchReachable = false
+    private(set) var stageDelivered = false
     private var lastReceiptID: UUID?
 
     init(trainer: TrainerDiagnostic) {
@@ -78,11 +80,16 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
             status = "Finish the current ride or Watch diagnostic before staging another workout."
             return
         }
+        guard await trainer.prepareForRide() else {
+            status = trainer.preparationError ?? "Trainer preparation failed."
+            return
+        }
         if !prepared { await prepare() }
         guard prepared else { return }
         do {
-            guard let range = trainer.powerRange, trainer.hasControl, !trainer.pending else {
-                status = "Connect and request trainer control in Diagnostics first."
+            guard !trainer.workoutOwnsTrainer, !trainer.sequenceActive, coordinatedID == nil,
+                  session == nil, trainer.readyToRide, let range = trainer.powerRange else {
+                status = "Trainer readiness changed. Prepare the trainer here and retry."
                 return
             }
             _ = try WorkoutPlayback(workout: workout, ftp: ftp, range: range)
@@ -97,7 +104,8 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
             try WCSession.default.updateApplicationContext(["stage": data])
             staged = descriptor
             stagedWorkout = workout
-            status = "Sent \(workout.name). Open CadenceCore on Watch and tap Start workout."
+            stageDelivered = false
+            status = "Workout queued. Open CadenceCore on Watch; waiting for delivery confirmation."
         } catch {
             status = "Could not stage workout: \(error.localizedDescription)"
         }
@@ -222,6 +230,7 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
         staged = nil
         stagedWorkout = nil
         gate = nil
+        stageDelivered = false
         heartRate = nil
         receivedAt = nil
         do { try WCSession.default.updateApplicationContext([:]) }
@@ -286,7 +295,9 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
         Task { @MainActor in
             guard session === workoutSession else { return }
             status = "Watch session failed: \(error.localizedDescription)"
+            trainer.recordWatchFailure(status)
             trainer.interruptCoordinatedWorkout(status)
+            session = nil
             heartRate = nil
             receivedAt = nil
         }
@@ -322,8 +333,31 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        let reachable = session.isReachable
         Task { @MainActor in
+            watchReachable = reachable
             if let error { status = "Watch connection activation failed: \(error.localizedDescription)" }
+        }
+    }
+
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        let reachable = session.isReachable
+        Task { @MainActor in watchReachable = reachable }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let id = (message["stagedID"] as? String).flatMap(UUID.init(uuidString:))
+        let failure = message["failure"] as? String
+        Task { @MainActor in
+            guard let id, staged?.id == id else { return }
+            if let failure {
+                status = failure
+                UserDefaults.standard.set(failure, forKey: "lastWatchSessionError")
+                trainer.recordWatchFailure(failure)
+                return
+            }
+            stageDelivered = true
+            status = "Ready on Watch. Tap Start workout on your wrist."
         }
     }
 

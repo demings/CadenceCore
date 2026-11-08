@@ -8,9 +8,21 @@ The planned product has Watch-first controls and Health recording, iPhone traine
 
 ## Workout library
 
-The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Enter your FTP (1–2000 W) to see interval watt targets alongside % FTP, a power-profile chart, and a full interval-list alternative. Open a workout to review warnings and start ERG playback; trainer setup and diagnostics remain in their separate tab.
+The **Workouts** tab supports Files-based ZWO import, an original example workout, local SwiftData persistence, rename, duplicate, favorite, and delete. Open a workout for a single setup flow: **training targets → trainer → start your ride**. Enter your FTP (1–2000 W) there or in Settings to see interval watt targets alongside % FTP, a power-profile chart, and an accessible interval-list alternative. FTP and simulation preferences share one observable configuration owner and existing persisted keys; a ride keeps an immutable snapshot.
 
-The FTP number pad has a **Done** button to dismiss it; scrolling also dismisses it interactively. Importing or adding an example closes the keyboard without changing the entered FTP.
+The FTP number pad has an inline **Done** button to dismiss it; scrolling also dismisses it interactively. No FTP default is assumed.
+
+## Guided setup and navigation
+
+- **Workouts** is the library and guided ride setup; **Ride** always provides current controls or the next-ride/device status; **Settings** groups FTP, optional simulation, devices and troubleshooting.
+- **Find my trainer** requests Bluetooth/discovery in context. Choose your trainer once; later explicit searches reconnect only its remembered identifier, never an arbitrary nearby trainer. Search and connection attempts are bounded to 12 seconds and cancellable. Change trainer is allowed only when no ride/test or acknowledged trainer activity is active.
+- **Prepare trainer**, or **Prepare ride on Watch**, checks connection, verified FTMS power capabilities/range, control subscription, acknowledged control, idle command/stop flow and telemetry no older than three seconds. Preparation requests control automatically when capabilities are ready, but sends no target/start command. Pedal briefly when fresh measurements are requested.
+- Watch preparation first checks the trainer, then requests Health permissions if needed. **Queued** and **delivered** are distinct: open the Watch app and wait for its delivery acknowledgment before starting. Restaging updates the next-ride snapshot, not an active ride. An active Watch HR diagnostic must be ended/discarded before a recorded ride.
+- Low-level tests and the explicit **Reduce load to 0 W and stop** control remain under **Settings → Diagnostics and exportable log**. They are not prerequisites for normal riding. iPhone-only, unsaved playback is a secondary option within workout setup.
+- Paused/interrupted rides expose trainer reconnection/control preparation within **Ride**; restoring connection never resumes ERG automatically. A lost Watch mirroring session still requires explicitly ending the recording rather than pretending it can resume.
+- Watch start errors include the operation, localized message and error domain/code. Last error text remains in Watch troubleshooting and, when reachable, iPhone Settings. Watch waits up to eight seconds for prepared/ended lifecycle transitions instead of immediately starting mirroring or reusing a finishing session. An unconfirmed end keeps the local-end escape hatch rather than silently claiming cleanup.
+
+The reported “Could not start session” was not reproducible with the available device evidence. These changes improve lifecycle sequencing and expose the cause; they do **not** establish that the user's hardware failure is resolved. Reinstall both apps, close other active workouts, then test a short Watch-started ride and immediate second ride. Share the operation/domain/code if it fails. Crash/relaunch recovery of an existing Health session is still not implemented; do not assume progress is recoverable.
 
 Supported UTF-8 cycling ZWO blocks:
 
@@ -24,8 +36,8 @@ Imports retain their original source bytes locally. Import/persistence errors ar
 
 ## iPhone ERG playback
 
-1. Close other trainer-controlling apps. In **Diagnostics**, connect to KICKR and **Request FTMS control**. Wait for fresh telemetry; do not arm a diagnostic test.
-2. Set FTP, open an imported workout in **Workouts**, review its profile/warnings, and confirm **Start ERG workout**. The player validates the loaded interval values and trainer range before sending any workout command.
+1. Close other trainer-controlling apps. Open a workout, enter FTP and choose your KICKR in its **Trainer** setup section.
+2. Review the profile/warnings and expand **Ride without Watch recording**, then confirm **Start iPhone-only ride**. Preparation acquires trainer control and requires fresh telemetry before playback. The player validates the loaded interval values and trainer range before sending any workout command.
 3. The initial target must be acknowledged before start is sent; timing begins only after start is acknowledged. Workouts use an immutable name/interval/FTP snapshot, so library edits do not alter an active ride. Targets are rounded to supported trainer increments without exceeding the supported range.
 4. The live ride shows active time, interval/remaining time, scheduled power, actual measured power/cadence, and fresh mirrored Watch HR when a separate diagnostic HR session is running. **Scheduled target** is the interval plan, not a claim about actual applied resistance during pause/finish.
 5. **Pause and reduce load** freezes active time and queues the acknowledged 0 W then stop sequence behind any pending command. Resume is enabled after that sequence completes, requires fresh telemetry/control and the same trainer power range, restores the scheduled target, then starts. Paused and start-handshake time are excluded.
@@ -35,12 +47,12 @@ Diagnostic target/start/test controls are blocked while the player owns the trai
 
 After an interruption, reconnect/reacquire control as necessary and resume explicitly, or retry finish. **Force-quit/relaunch loses ride progress and may leave the last target on the trainer.** The user reports workout playback, pause, resume, and finish work on the actual KICKR. This establishes basic functional acceptance, not measured ramp/boundary timing, automatic completion, long-duration continuity, or interruption recovery. Locked-screen general playback remains unverified; the earlier locked-screen test covered the diagnostic schedule only.
 
-**Start ERG workout** remains an iPhone-only option: it does not save to Health or include Watch controls. A separate Watch HR diagnostic can still display HR for that option, and must be ended/discarded on Watch.
+**Start iPhone-only ride** does not save to Health or include Watch controls. A separate Watch HR diagnostic can still display HR for that option, and must be ended/discarded on Watch.
 
 ## Watch controls and Health recording
 
 1. Rebuild/install **both** apps. Close Apple's Workout and any other workout/trainer apps; CadenceCore Watch owns one HealthKit workout, and iPhone owns trainer control.
-2. Connect/request control in iPhone **Diagnostics**. In **Workouts**, enter FTP, open a workout, review warnings and choose **Send to Watch**. Allow Health permissions on iPhone if prompted. Sending stages the immutable workout snapshot; it does not change trainer resistance.
+2. In **Workouts**, open a workout, enter FTP, choose your trainer, review warnings and choose **Prepare ride on Watch**. Confirm sending, allow Health permissions if prompted, and wait for **Ready on Watch**. Preparation automatically acquires trainer control. Sending stages the immutable workout snapshot; it does not change trainer resistance.
 3. Open CadenceCore on Watch, allow its Health permissions, and tap **Start workout**. Workout-write permission is required; missing optional power/cadence/energy sharing is shown explicitly. Watch prepares/mirrors its session before asking iPhone to start the trainer. The existing acknowledged target/start sequence still gates execution. Watch starts Health collection only after receiving the running state.
 4. Watch shows HR, scheduled/measured watts, cadence, active time and interval remaining, plus **Pause**, **Resume**, and confirmed **Finish and save**. Requests have ride/command identities and retries reuse the same identity. Watch does not claim a paused/resumed/completed trainer state merely because a message was sent. iPhone **Current ride** controls remain available.
 5. After iPhone confirms 0 W then stop, Watch ends collection and calls HealthKit's `finishWorkout` once. A successful result is an indoor cycling workout in **Health/Fitness**, with Watch HR/energy when available and measured trainer power/cadence when permission/data allow. Trainer sample windows skip stale/duplicate data and do not bridge pauses or gaps longer than three seconds. Configured simulation can add labeled speed/distance; no GPS is added.

@@ -9,7 +9,7 @@ struct CadenceCoreApp: App {
     @State private var watch: WatchMirror
 
     init() {
-        let trainer = TrainerDiagnostic()
+        let trainer = TrainerDiagnostic(configuration: RideConfiguration())
         _trainer = State(initialValue: trainer)
         _watch = State(initialValue: WatchMirror(trainer: trainer))
     }
@@ -19,49 +19,35 @@ struct CadenceCoreApp: App {
             TabView {
                 NavigationStack { WorkoutLibraryView(trainer: trainer, watch: watch) }
                     .tabItem { Label("Workouts", systemImage: "list.bullet.rectangle") }
-                NavigationStack { DiagnosticView(trainer: trainer, watch: watch) }
-                    .tabItem { Label("Diagnostics", systemImage: "wrench.and.screwdriver") }
-                NavigationStack { SimulationSettingsView(trainer: trainer) }
+                NavigationStack { RideHomeView(trainer: trainer, watch: watch) }
+                    .tabItem { Label("Ride", systemImage: "bicycle") }
+                NavigationStack { AppSettingsView(trainer: trainer, watch: watch) }
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
             .tint(.teal)
         }
         .modelContainer(for: SavedWorkout.self)
     }
+}
 
-    struct WorkoutLibraryView: View {
+struct WorkoutLibraryView: View {
         @Bindable var trainer: TrainerDiagnostic
         @Bindable var watch: WatchMirror
         @Environment(\.modelContext) private var context
         @Query(sort: \SavedWorkout.createdAt, order: .reverse) private var workouts: [SavedWorkout]
-        @AppStorage("ftpWatts") private var ftp = ""
         @State private var importing = false
         @State private var errorMessage: String?
-        @FocusState private var ftpFocused: Bool
+        @State private var deleting: SavedWorkout?
 
         var body: some View {
             List {
-                Section("Your FTP") {
-                    TextField("FTP in watts", text: $ftp)
-                        .keyboardType(.numberPad)
-                        .focused($ftpFocused)
-                        .accessibilityLabel("Functional threshold power in watts")
-                    if let value = Double(ftp), value.isFinite, (1...2000).contains(value) {
-                        Text("Preview targets use \(Int(value)) W FTP.").font(.caption)
-                    } else {
-                        Text("Enter FTP from 1–2000 W to preview watt targets. No default is assumed.")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                }
                 Section {
-                    Text("Connect and request trainer control in Diagnostics, then open a workout. Send to Watch for Health recording, or start iPhone-only playback without saving.")
+                    Text("Choose a workout, prepare its devices, then start on Watch. Setup and readiness are all on the workout screen.")
                         .font(.footnote)
                     Button("Import ZWO", systemImage: "square.and.arrow.down") {
-                        ftpFocused = false
                         importing = true
                     }
                     Button("Add original example", systemImage: "plus") {
-                        ftpFocused = false
                         save(.sample, source: nil)
                     }
                 }
@@ -77,7 +63,7 @@ struct CadenceCoreApp: App {
                     }
                     ForEach(workouts) { saved in
                         NavigationLink {
-                            WorkoutPreviewView(saved: saved, ftpText: ftp, trainer: trainer, watch: watch)
+                            WorkoutPreviewView(saved: saved, trainer: trainer, watch: watch)
                         } label: {
                             HStack {
                                 if saved.favorite { Image(systemName: "star.fill").foregroundStyle(.yellow) }
@@ -90,10 +76,9 @@ struct CadenceCoreApp: App {
                                 persist()
                             }.tint(.orange)
                         }
-                        .swipeActions {
+                        .swipeActions(allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) {
-                                context.delete(saved)
-                                persist()
+                                deleting = saved
                             }
                             Button("Duplicate") {
                                 do {
@@ -108,14 +93,18 @@ struct CadenceCoreApp: App {
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Workouts")
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    if ftpFocused {
-                        Spacer()
-                        Button("Done") { ftpFocused = false }
-                            .accessibilityHint("Dismisses the keyboard")
-                    }
+            .alert("Delete this workout?", isPresented: Binding(
+                get: { deleting != nil }, set: { if !$0 { deleting = nil } }
+            )) {
+                Button("Cancel", role: .cancel) { deleting = nil }
+                Button("Delete workout", role: .destructive) {
+                    guard let deleting else { return }
+                    context.delete(deleting)
+                    persist()
+                    self.deleting = nil
                 }
+            } message: {
+                Text("This removes the library copy. It does not remove an original ZWO file or a workout saved to Health.")
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
                 do {
@@ -163,9 +152,8 @@ struct CadenceCoreApp: App {
         }
     }
 
-    struct WorkoutPreviewView: View {
+struct WorkoutPreviewView: View {
         @Bindable var saved: SavedWorkout
-        let ftpText: String
         @Bindable var trainer: TrainerDiagnostic
         @Bindable var watch: WatchMirror
         @Environment(\.modelContext) private var context
@@ -176,10 +164,10 @@ struct CadenceCoreApp: App {
         @State private var confirmStart = false
         @State private var confirmWatch = false
         @State private var showingRide = false
+        @State private var localStarting = false
 
         private var ftp: Double? {
-            guard let value = Double(ftpText), value.isFinite, (1...2000).contains(value) else { return nil }
-            return value
+            trainer.configuration.ftp
         }
 
         private struct ProfilePoint: Identifiable {
@@ -208,9 +196,22 @@ struct CadenceCoreApp: App {
                         LabeledContent("Duration", value: "\(Int(workout.duration / 60)) min \(Int(workout.duration) % 60) sec")
                         Text("Send to Watch for controls and Health recording. iPhone-only playback does not save a ride.")
                             .font(.footnote)
-                        Button("Send to Watch", systemImage: "applewatch") { confirmWatch = true }
-                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || watch.coordinatedID != nil)
-                        Text(watch.status).font(.caption)
+                    }
+                    Section("1 · Training targets") { FTPSettingView(configuration: trainer.configuration) }
+                    Section("2 · Trainer") { TrainerSetupView(trainer: trainer) }
+                    Section("3 · Start your ride") {
+                        Label(watch.watchReachable ? "Watch app reachable" : "Open CadenceCore on Watch", systemImage: "applewatch")
+                        Button(watch.staging ? "Preparing ride…" : "Prepare ride on Watch", systemImage: "applewatch") { confirmWatch = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || watch.coordinatedID != nil || watch.staging)
+                        Text(watch.status).font(.subheadline)
+                        if let staged = watch.staged {
+                            Label(watch.stageDelivered ? "Ready on Watch: \(staged.name)" : "Waiting for delivery: \(staged.name)",
+                                  systemImage: watch.stageDelivered ? "checkmark.circle" : "clock")
+                                .font(.caption)
+                            Text("Prepared with FTP \(Int(staged.ftp)) W. Prepare again to apply FTP or simulation changes.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if let settings = trainer.simulationSettings {
                             Text("Simulated flat-road speed/distance enabled · \(settings.riderMass.formatted()) kg rider. Health inclusion \(settings.saveToHealth ? "on" : "off"); frozen when sent to Watch.")
                                 .font(.caption)
@@ -218,11 +219,10 @@ struct CadenceCoreApp: App {
                             Text("Set up simulated speed/distance in Settings (optional).").font(.caption)
                         }
                         if let issue = trainer.simulationError { Text(issue).font(.caption).foregroundStyle(.red) }
-                        Button("Start ERG workout", systemImage: "play.fill") { confirmStart = true }
-                            .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || trainer.pending || !trainer.hasControl || trainer.stopFlow.isInProgress || watch.coordinatedID != nil)
-                        if !trainer.hasControl {
-                            Text("Connect and request control in the Diagnostics tab first.")
-                                .font(.caption).foregroundStyle(.orange)
+                        DisclosureGroup("Ride without Watch recording") {
+                            Text("No Health save or Watch controls. Use only if you intentionally want an unsaved ride.").font(.caption)
+                            Button(localStarting ? "Preparing…" : "Start iPhone-only ride", systemImage: "play.fill") { confirmStart = true }
+                                .disabled(ftp == nil || trainer.workoutOwnsTrainer || trainer.sequenceActive || watch.coordinatedID != nil || localStarting || watch.staging)
                         }
                         Text(trainer.playbackStatus).font(.caption)
                     }
@@ -259,7 +259,11 @@ struct CadenceCoreApp: App {
                 }
             }
             .navigationTitle(saved.name)
+            .scrollDismissesKeyboard(.interactively)
             .navigationDestination(isPresented: $showingRide) { RideView(trainer: trainer, watch: watch) }
+            .onChange(of: trainer.playbackID) {
+                if trainer.workoutOwnsTrainer { showingRide = true }
+            }
             .confirmationDialog("Send this workout to Watch?", isPresented: $confirmWatch, titleVisibility: .visible) {
                 Button("Send to Watch") {
                     guard var workout, let ftp else { return }
@@ -273,14 +277,26 @@ struct CadenceCoreApp: App {
                 Button("Start workout") {
                     guard var workout, let ftp else { return }
                     workout.name = saved.name
-                    trainer.startWorkout(workout, ftp: ftp, simulation: trainer.simulationSettings)
-                    showingRide = trainer.workoutOwnsTrainer
+                    let selected = workout
+                    localStarting = true
+                    Task {
+                        defer { localStarting = false }
+                        guard await trainer.prepareForRide() else {
+                            errorMessage = trainer.preparationError
+                            return
+                        }
+                        trainer.startWorkout(selected, ftp: ftp, simulation: trainer.simulationSettings)
+                        showingRide = trainer.workoutOwnsTrainer
+                    }
                 }
             } message: {
                 Text("iPhone-only ride: no Health save or Watch controls. Use Send to Watch instead for recording. Trainer resistance follows the imported intervals; pause/finish requests reduced load, not zero resistance.")
             }
             .toolbar {
-                Button("Rename") { editingName = saved.name; renaming = true }
+                Menu {
+                    Button("Rename") { editingName = saved.name; renaming = true }
+                    NavigationLink("Simulation setup") { SimulationSettingsView(trainer: trainer) }
+                } label: { Image(systemName: "ellipsis.circle").accessibilityLabel("Workout options") }
             }
 
             .task {
@@ -303,8 +319,6 @@ struct CadenceCoreApp: App {
             )) { Button("OK") { errorMessage = nil } } message: { Text(errorMessage ?? "") }
         }
     }
-}
-
 struct RideView: View {
     @Bindable var trainer: TrainerDiagnostic
     @Bindable var watch: WatchMirror
@@ -347,10 +361,7 @@ struct RideView: View {
                         Button("Resume workout", systemImage: "play.fill") { watch.resumeRide() }
                             .disabled(trainer.pending || trainer.stopFlow.isInProgress || !trainer.hasControl)
                             .frame(minHeight: 44)
-                        if !trainer.hasControl {
-                            Text("Reconnect and request control in Diagnostics, then resume explicitly.")
-                                .font(.footnote)
-                        }
+                        if !trainer.readyToRide { TrainerSetupView(trainer: trainer) }
                     }
                     if playback.state != .completed {
                         Button("Finish workout", role: .destructive) { confirmFinish = true }

@@ -34,9 +34,11 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private(set) var playbackID: UUID?
     private(set) var playbackStatus = "No workout selected."
     var onWorkoutUpdate: (() -> Void)?
-    private(set) var simulationSettings: SimulationConfiguration?
+    let configuration: RideConfiguration
+    var simulationSettings: SimulationConfiguration? { configuration.simulation }
     private(set) var simulation: RideSimulation?
-    private(set) var simulationError: String?
+    var simulationError: String? { configuration.simulationError ?? simulationRuntimeError }
+    private var simulationRuntimeError: String?
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -51,33 +53,82 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     private var lastSequenceSampleTime: TimeInterval?
     private var lastWorkoutLogTime: Double?
     private var workoutWatchdog: Task<Void, Never>?
+    private(set) var preparing = false
+    private(set) var preparationError: String?
+    private var reconnectPreferred = false
+    private var connectionTimeout: Task<Void, Never>?
+    private(set) var scanning = false
+    private var scanTimeout: Task<Void, Never>?
+    private var preparationCancelled = false
+
+    var isConnecting: Bool { peripheral != nil && !connected }
+    var selectedTrainerName: String? { peripheral?.name ?? UserDefaults.standard.string(forKey: "trainerName") }
+    var readinessIssue: TrainerReadiness.Issue? {
+        TrainerReadiness.issue(connected: connected,
+            capabilitiesReady: controlSubscribed && powerSupported && powerRange != nil,
+            hasControl: hasControl, busy: pending || stopFlow.isInProgress, sampleDate: telemetryDate)
+    }
+    var readyToRide: Bool { readinessIssue == nil }
+
+    func findTrainer() {
+        reconnectPreferred = true
+        scan()
+    }
+
+    func prepareForRide(forResume: Bool = false) async -> Bool {
+        guard !preparing else { return false }
+        let resumable = playback.map { [.paused, .interrupted].contains($0.state) } ?? false
+        guard !sequenceActive, !workoutOwnsTrainer || (forResume && resumable) else {
+            preparationError = "Finish the current ride or diagnostic before preparing a new one."
+            return false
+        }
+        preparing = true
+        preparationCancelled = false
+        preparationError = nil
+        defer { preparing = false }
+        if !connected, !isConnecting { findTrainer() }
+        let deadline = ProcessInfo.processInfo.systemUptime + 12
+        var requested = false
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if preparationCancelled { return false }
+            if readyToRide { return true }
+            if canRequestControl, !hasControl, !requested {
+                requested = true
+                requestControl()
+            }
+            if requested, !pending, !hasControl {
+                preparationError = "Trainer did not grant control. Close Zwift/Wahoo and retry."
+                return false
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch {
+                preparationError = "Ride preparation cancelled."
+                return false
+            }
+        }
+        preparationError = "Trainer is not ready: \(readinessIssue?.rawValue ?? status). Choose a trainer below, close other cycling apps, and pedal briefly for fresh measurements."
+        record(preparationError ?? "Trainer preparation timed out.")
+        return false
+    }
 
     var workoutOwnsTrainer: Bool {
         playback.map { $0.state != .completed } ?? false
     }
 
     func saveSimulationSettings(_ settings: SimulationConfiguration?) {
-        do {
-            if let settings {
-                guard settings.isValid else { throw SimulationError.invalidValues }
-                UserDefaults.standard.set(try JSONEncoder().encode(settings), forKey: "simulationSettings")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "simulationSettings")
-            }
-            simulationSettings = settings
-            simulationError = nil
-        } catch {
-            simulationError = "Simulation settings were not saved: \(error.localizedDescription)"
-            record(simulationError ?? error.localizedDescription)
-        }
+        configuration.saveSimulation(settings)
+        if configuration.simulationError == nil { simulationRuntimeError = nil }
+        if let error = configuration.simulationError { record(error) }
+    }
+
+    func recordWatchFailure(_ message: String) {
+        record("Watch session: \(message)")
     }
 
     func startWorkout(_ workout: Workout, ftp: Double, simulation configuration: SimulationConfiguration? = nil) {
         defer { onWorkoutUpdate?() }
-        guard !workoutOwnsTrainer, !sequenceActive, connected, hasControl, !pending,
-              !stopFlow.isInProgress, let range = powerRange,
-              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
-            playbackStatus = "Connect and request trainer control in Diagnostics, with fresh telemetry and no active test."
+        guard !workoutOwnsTrainer, !sequenceActive, readyToRide, let range = powerRange else {
+            playbackStatus = "Prepare the trainer on the workout setup screen, with fresh telemetry and no active test."
             record(playbackStatus)
             return
         }
@@ -86,7 +137,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             let model = try configuration.map { try RideSimulation(configuration: $0) }
             playback = engine
             simulation = model
-            if configuration != nil { simulationError = nil }
+            simulationRuntimeError = nil
             playbackID = UUID()
             lastWorkoutLogTime = nil
             playbackStatus = "Setting initial target…"
@@ -106,8 +157,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func resumeWorkout() {
         defer { onWorkoutUpdate?() }
-        guard connected, hasControl, !pending, !stopFlow.isInProgress,
-              let telemetryDate, Date().timeIntervalSince(telemetryDate) <= 3 else {
+        guard readyToRide else {
             playbackStatus = "Resume blocked: reacquire control and wait for fresh telemetry."
             record(playbackStatus)
             return
@@ -170,7 +220,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             do { try simulation?.sample(watts: power, uptime: now, activeTime: playback.elapsed, date: date) }
             catch {
                 simulation?.suspend()
-                simulationError = "Simulation interrupted: \(error.localizedDescription)"
+                simulationRuntimeError = "Simulation interrupted: \(error.localizedDescription)"
                 record(simulationError ?? error.localizedDescription)
             }
         }
@@ -198,18 +248,10 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
-    override init() {
+    init(configuration: RideConfiguration) {
+        self.configuration = configuration
         super.init()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let data = UserDefaults.standard.data(forKey: "simulationSettings") {
-            do {
-                let settings = try JSONDecoder().decode(SimulationConfiguration.self, from: data)
-                guard settings.isValid else { throw SimulationError.invalidValues }
-                simulationSettings = settings
-            } catch {
-                simulationError = "Saved simulation settings are invalid: \(error.localizedDescription). Reconfigure before using simulation."
-            }
-        }
         do {
             let directory = try FileManager.default.url(
                 for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true
@@ -226,10 +268,21 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     var canRequestControl: Bool {
         connected && controlSubscribed && powerSupported && powerRange != nil && !pending && !stopFlow.isInProgress &&
-            (!workoutOwnsTrainer || playback?.state == .interrupted)
+            (!workoutOwnsTrainer || playback?.state == .interrupted || playback?.state == .paused)
     }
 
     func scan() {
+        guard !connected, !isConnecting else { return }
+        scanning = true
+        scanTimeout?.cancel()
+        scanTimeout = Task {
+            do { try await Task.sleep(for: .seconds(12)) }
+            catch { return }
+            central?.stopScan()
+            scanning = false
+            reconnectPreferred = false
+            if !connected, !isConnecting { status = "Search finished. Select a trainer, or retry with the trainer powered on and Bluetooth enabled." }
+        }
         if central == nil {
             central = CBCentralManager(delegate: self, queue: .main)
         } else if central?.state == .poweredOn {
@@ -244,10 +297,49 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     func connect(_ device: Device) {
         guard !connected, peripheral == nil else { return }
         central?.stopScan()
+        scanning = false
+        reconnectPreferred = false
+        scanTimeout?.cancel()
         peripheral = device.peripheral
+        UserDefaults.standard.set(device.id.uuidString, forKey: "trainerID")
+        UserDefaults.standard.set(device.name, forKey: "trainerName")
         device.peripheral.delegate = self
         status = "Connecting to \(device.name)…"
         central?.connect(device.peripheral)
+        connectionTimeout?.cancel()
+        connectionTimeout = Task {
+            do { try await Task.sleep(for: .seconds(12)) }
+            catch { return }
+            guard let peripheral, !connected else { return }
+            central?.cancelPeripheralConnection(peripheral)
+            preparationError = "Connection timed out. Keep the trainer nearby and close other cycling apps before retrying."
+            status = preparationError ?? "Connection timed out."
+            self.peripheral = nil
+        }
+    }
+
+    func cancelSearch() {
+        preparationCancelled = true
+        scanTimeout?.cancel()
+        connectionTimeout?.cancel()
+        central?.stopScan()
+        scanning = false
+        reconnectPreferred = false
+        if let peripheral, !connected {
+            central?.cancelPeripheralConnection(peripheral)
+            self.peripheral = nil
+        }
+        preparationError = "Trainer setup cancelled."
+    }
+
+    func changeTrainer() {
+        guard !workoutOwnsTrainer, !sequenceActive, !trainerRunning, let peripheral else {
+            preparationError = "Finish the current ride or reduce load and stop before changing trainers."
+            return
+        }
+        UserDefaults.standard.removeObject(forKey: "trainerID")
+        UserDefaults.standard.removeObject(forKey: "trainerName")
+        central?.cancelPeripheralConnection(peripheral)
     }
 
     func requestControl() {
@@ -415,7 +507,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            scan()
+            if scanning { scan() }
         case .poweredOff:
             status = "Bluetooth is off. Trainer state unconfirmed."
         case .unauthorized:
@@ -442,13 +534,22 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard !devices.contains(where: { $0.id == peripheral.identifier }) else { return }
         let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
         guard let name else { return }
-        devices.append(Device(id: peripheral.identifier, name: name, peripheral: peripheral))
+        if !devices.contains(where: { $0.id == peripheral.identifier }) {
+            devices.append(Device(id: peripheral.identifier, name: name, peripheral: peripheral))
+        }
+        let resumable = playback.map { [.paused, .interrupted].contains($0.state) } ?? false
+        if reconnectPreferred, (!workoutOwnsTrainer || resumable), !sequenceActive,
+           peripheral.identifier.uuidString == UserDefaults.standard.string(forKey: "trainerID") {
+            reconnectPreferred = false
+            connect(Device(id: peripheral.identifier, name: name, peripheral: peripheral))
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard self.peripheral === peripheral else { central.cancelPeripheralConnection(peripheral); return }
+        connectionTimeout?.cancel()
         connected = true
         services = []
         status = "Inspecting all advertised GATT services."
@@ -457,12 +558,15 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        guard self.peripheral === peripheral else { return }
+        connectionTimeout?.cancel()
         self.peripheral = nil
         status = "Connection failed: \(error?.localizedDescription ?? "Bluetooth supplied no reason")."
         record(status)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        guard self.peripheral === peripheral else { return }
         interruptWorkout("Trainer disconnected; workout frozen. Reconnect and resume explicitly.")
         if stopFlow.state != .idle { failStop("Connection ended; current trainer load cannot be confirmed.") }
         connected = false

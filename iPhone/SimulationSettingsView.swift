@@ -18,7 +18,7 @@ struct SimulationSettingsView: View {
         Form {
             Section {
                 Text("Flat-road estimates from measured power. These are not actual travel or trainer flywheel speed, and never change ERG resistance.")
-                Text("Set up your mass below; no weight is read from Health. Changes apply to the next ride or next Send to Watch, not a staged/active ride.")
+                Text("Set up your mass below; no weight is read from Health. Changes apply the next time you prepare a ride, not to a staged/active ride.")
                     .font(.footnote)
                 if let settings = trainer.simulationSettings {
                     Label("Configured · \(settings.riderMass.formatted()) kg rider", systemImage: "checkmark.circle")
