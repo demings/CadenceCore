@@ -13,6 +13,8 @@ struct CadenceCoreWatchApp: App {
     @State private var watchPage = 0
     @State private var showingIntensity = false
     @State private var intensity = 100.0
+    @State private var showingWattBias = false
+    @State private var wattBias = 0
     private var currentIntensityPercent: Int {
         Int((workout.snapshot?.intensity ?? 1.0) * 100.0)
     }
@@ -31,6 +33,10 @@ struct CadenceCoreWatchApp: App {
         Button("Finish and save", role: .destructive) { confirmFinish = true }
             .disabled(workout.saving || workout.commandPending || workout.linkStale)
         if ["running", "paused"].contains(workout.snapshot?.state ?? "") {
+            Button("Watt bias · \((workout.snapshot?.wattBias ?? 0).formatted(.number.sign(strategy: .always()))) W") {
+                wattBias = workout.snapshot?.wattBias ?? 0
+                showingWattBias = true
+            }.disabled(workout.saving || workout.commandPending || workout.linkStale)
             Button("Intensity · \(currentIntensityPercent)%") {
                 intensity = Double(currentIntensityPercent)
                 showingIntensity = true
@@ -141,6 +147,37 @@ struct CadenceCoreWatchApp: App {
         }
     }
 
+    private var wattBiasSheet: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                Text("Target watt bias").font(.headline)
+                Text("\(wattBias.formatted(.number.sign(strategy: .always()))) W")
+                    .font(.largeTitle.monospacedDigit())
+                HStack {
+                    Button {
+                        wattBias -= 5
+                    } label: {
+                        Image(systemName: "minus").frame(minWidth: 44, minHeight: 44)
+                    }.accessibilityLabel("Decrease watt bias five watts").disabled(wattBias <= -32760)
+                    Button {
+                        wattBias += 5
+                    } label: {
+                        Image(systemName: "plus").frame(minWidth: 44, minHeight: 44)
+                    }.accessibilityLabel("Increase watt bias five watts").disabled(wattBias >= 32760)
+                }
+                Button("Reset to 0 W") { wattBias = 0 }
+                Button("Apply watt bias") {
+                    workout.control(.wattBias, requestedWattBias: wattBias)
+                    showingWattBias = false
+                }.disabled(workout.saving || workout.commandPending || workout.linkStale
+                    || !["running", "paused"].contains(workout.snapshot?.state ?? ""))
+                Text("Fixed watts added after intensity. FTP is unchanged; iPhone checks every target. Paused changes apply on resume.")
+                    .font(.caption2)
+                Button("Cancel") { showingWattBias = false }
+            }.padding()
+        }
+    }
+
     private var diagnosticsSheet: some View {
         ScrollView {
             VStack(spacing: 12) {
@@ -171,6 +208,7 @@ struct CadenceCoreWatchApp: App {
                 .tint(Color("AccentColor"))
                 .onChange(of: workout.active) { watchPage = 0 }
                 .sheet(isPresented: $showingIntensity) { intensitySheet }
+                .sheet(isPresented: $showingWattBias) { wattBiasSheet }
                 .sheet(isPresented: $showingDiagnostics) { diagnosticsSheet }
                 .confirmationDialog(
                     "Finish workout and save to Health?", isPresented: $confirmFinish,
@@ -518,11 +556,12 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
         }
     }
 
-    func control(_ action: RideAction, requestedIntensity: Double? = nil) {
+    func control(_ action: RideAction, requestedIntensity: Double? = nil, requestedWattBias: Int? = nil) {
         guard active, !saving, !commandPending, let ride else { return }
-        guard [.pause, .resume, .finish, .intensity].contains(action) else { return }
+        guard [.pause, .resume, .finish, .intensity, .wattBias].contains(action) else { return }
         let message = RideMessage(
-            rideID: ride.id, action: action, requestedIntensity: requestedIntensity)
+            rideID: ride.id, action: action, requestedIntensity: requestedIntensity,
+            requestedWattBias: requestedWattBias)
         pendingCommand = message
         status = "Waiting for iPhone to confirm \(action.rawValue)…"
         Task {
@@ -552,7 +591,8 @@ final class WatchWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuild
                         try await self.send(
                             RideMessage(
                                 rideID: ride.id, action: pending.action,
-                                commandID: pending.commandID, requestedIntensity: pending.requestedIntensity))
+                                commandID: pending.commandID, requestedIntensity: pending.requestedIntensity,
+                                requestedWattBias: pending.requestedWattBias))
                     } else {
                         try await self.send(
                             RideMessage(

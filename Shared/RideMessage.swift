@@ -16,7 +16,7 @@ public enum WatchStartPhase: String, Sendable {
 }
 
 public enum RideAction: String, Codable, Sendable {
-    case ready, heartbeat, pause, resume, finish, heartRate, snapshot, saved, failure, intensity
+    case ready, heartbeat, pause, resume, finish, heartRate, snapshot, saved, failure, intensity, wattBias
 }
 
 public struct RecordingMetrics: Codable, Equatable, Sendable {
@@ -103,12 +103,13 @@ public struct RideSnapshot: Codable, Sendable {
     public let guidance: CadenceGuidanceEvaluator.Result?
     public let cue: String?
     public let acknowledgedCommandID: UUID?
+    public let wattBias: Int?
 
     public init(sequence: Int, state: String, elapsed: Double, interval: Int?, remaining: Double?,
                 target: Int?, power: Int?, cadence: Double?, telemetryDate: Date?, status: String,
                 simulation: SimulatedMetrics? = nil, intensity: Double? = nil,
                 guidance: CadenceGuidanceEvaluator.Result? = nil, cue: String? = nil,
-                acknowledgedCommandID: UUID? = nil) {
+                acknowledgedCommandID: UUID? = nil, wattBias: Int? = nil) {
         self.sequence = sequence
         self.state = state
         self.elapsed = elapsed
@@ -124,6 +125,7 @@ public struct RideSnapshot: Codable, Sendable {
         self.guidance = guidance
         self.cue = cue
         self.acknowledgedCommandID = acknowledgedCommandID
+        self.wattBias = wattBias
     }
 
     public var isValid: Bool {
@@ -137,6 +139,7 @@ public struct RideSnapshot: Codable, Sendable {
         (cadence.map { $0.isFinite && (0...1000).contains($0) } ?? true) &&
         (simulation.map(\.isValid) ?? true) &&
         (intensity.map { $0.isFinite && (0.5...1.5).contains($0) } ?? true) &&
+        (wattBias.map { (-32767...32767).contains($0) } ?? true) &&
         (guidance.map(\.isValid) ?? true) && (cue.map { $0.utf8.count <= 8192 } ?? true)
     }
 }
@@ -153,11 +156,12 @@ public struct RideMessage: Codable, Sendable {
     public let recording: RecordingMetrics?
     public let requestedIntensity: Double?
     public let savedWorkoutID: UUID?
+    public let requestedWattBias: Int?
 
     public init(rideID: UUID?, action: RideAction, date: Date = Date(), commandID: UUID = UUID(),
                 bpm: Double? = nil, snapshot: RideSnapshot? = nil, detail: String? = nil,
                 recording: RecordingMetrics? = nil, requestedIntensity: Double? = nil,
-                savedWorkoutID: UUID? = nil) {
+                savedWorkoutID: UUID? = nil, requestedWattBias: Int? = nil) {
         version = 1
         self.rideID = rideID
         self.commandID = commandID
@@ -169,6 +173,7 @@ public struct RideMessage: Codable, Sendable {
         self.recording = recording
         self.requestedIntensity = requestedIntensity
         self.savedWorkoutID = savedWorkoutID
+        self.requestedWattBias = requestedWattBias
     }
 
     public static func decode(_ data: Data, now: Date = Date(), allowDelayedReceipt: Bool = false) throws -> RideMessage {
@@ -182,6 +187,9 @@ public struct RideMessage: Codable, Sendable {
               message.recording.map(\.isValid) ?? true,
               message.requestedIntensity.map({ $0.isFinite && (0.5...1.5).contains($0) }) ?? true,
               message.action != .intensity || message.requestedIntensity != nil,
+              message.requestedWattBias.map({ (-32767...32767).contains($0) }) ?? true,
+              message.action != .wattBias || message.requestedWattBias != nil,
+              message.requestedWattBias == nil || message.action == .wattBias,
               message.savedWorkoutID == nil || message.action == .saved,
               message.bpm.map({ $0.isFinite && (1...300).contains($0) }) ?? true,
               message.action != .snapshot || message.snapshot != nil,

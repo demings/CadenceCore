@@ -80,6 +80,7 @@ private struct RideHistoryDetailView: View {
                         if let intensity = ride.initialIntensity {
                             LabeledContent("Initial intensity", value: "\(Int((intensity * 100).rounded()))%")
                         }
+                        LabeledContent("Final watt bias", value: "\(ride.currentWattBias.formatted(.number.sign(strategy: .always()))) W")
                         if let cadence = ride.cadenceConfiguration {
                             LabeledContent("Cadence guidance snapshot", value: cadence.enabled ? "Enabled" : "Disabled")
                             LabeledContent("Cadence haptics snapshot", value: cadence.hapticsEnabled ? "Enabled" : "Disabled")

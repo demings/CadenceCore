@@ -57,6 +57,7 @@ public struct WorkoutPlayback: Sendable {
     public private(set) var elapsed: Double = 0
     public private(set) var error: String?
     public private(set) var intensity: Double = 1
+    public private(set) var wattBias: Int = 0
     private var anchor: Double?
     private var lastService: Double?
     private var lastTarget: Int?
@@ -89,7 +90,7 @@ public struct WorkoutPlayback: Sendable {
         var start = 0.0
         for (index, interval) in workout.intervals.enumerated() {
             if elapsed < start + interval.duration {
-                let raw = interval.watts(at: elapsed - start, ftp: ftp) * intensity
+                let raw = interval.watts(at: elapsed - start, ftp: ftp) * intensity + Double(wattBias)
                 let steps = Int(((raw - Double(range.minimum)) / Double(range.increment)).rounded())
                 let maximumSteps = (range.maximum - range.minimum) / range.increment
                 let watts = range.minimum + min(maximumSteps, max(0, steps)) * range.increment
@@ -112,32 +113,48 @@ public struct WorkoutPlayback: Sendable {
     public mutating func adjustIntensity(_ value: Double, commandPending: Bool) throws -> Command? {
         guard [.running, .paused].contains(state), !commandPending,
               value.isFinite, (0.5...1.5).contains(value),
-              workout.intervals.allSatisfy({
-                  [$0.startPower, $0.endPower].allSatisfy {
-                      $0 * ftp * value >= Double(range.minimum) && $0 * ftp * value <= Double(range.maximum)
-                  }
-              }) else {
+              targetsFit(intensity: value, wattBias: wattBias) else {
             throw WorkoutImportError.invalid("intensity must be 50–150%, fit the trainer range, and change only during running/paused playback with no pending command.")
         }
         intensity = value
+        return adjustedTargetCommand()
+    }
+
+    public mutating func adjustWattBias(_ value: Int, commandPending: Bool) throws -> Command? {
+        guard [.running, .paused].contains(state), !commandPending,
+              targetsFit(intensity: intensity, wattBias: value) else {
+            throw WorkoutImportError.invalid("watt bias must keep every target within the trainer range and change only during running/paused playback with no pending command.")
+        }
+        wattBias = value
+        return adjustedTargetCommand()
+    }
+
+    private func targetsFit(intensity: Double, wattBias: Int) -> Bool {
+        (-32767...32767).contains(wattBias) && workout.intervals.allSatisfy {
+            [$0.startPower, $0.endPower].allSatisfy {
+                let watts = $0 * ftp * intensity + Double(wattBias)
+                return watts >= Double(range.minimum) && watts <= Double(range.maximum)
+            }
+        }
+    }
+
+    private mutating func adjustedTargetCommand() -> Command? {
         guard state == .running, let position, position.targetWatts != lastTarget else { return nil }
         lastTarget = position.targetWatts
         return .target(position.targetWatts)
     }
 
     public init(recovering workout: Workout, ftp: Double, range: PowerRange,
-                elapsed: Double, intensity: Double = 1) throws {
+                elapsed: Double, intensity: Double = 1, wattBias: Int = 0) throws {
         try self.init(workout: workout, ftp: ftp, range: range)
         guard elapsed.isFinite, (0...workout.duration).contains(elapsed),
               intensity.isFinite, (0.5...1.5).contains(intensity),
-              workout.intervals.allSatisfy({
-                  [$0.startPower, $0.endPower].allSatisfy {
-                      $0 * ftp * intensity >= Double(range.minimum) &&
-                          $0 * ftp * intensity <= Double(range.maximum)
-                  }
-              }) else { throw WorkoutImportError.invalid("invalid interrupted ride checkpoint.") }
+              targetsFit(intensity: intensity, wattBias: wattBias) else {
+            throw WorkoutImportError.invalid("invalid interrupted ride checkpoint.")
+        }
         self.elapsed = elapsed
         self.intensity = intensity
+        self.wattBias = wattBias
         state = .interrupted
         error = elapsed == workout.duration ?
             "Recovered completed progression. Trainer stop is unconfirmed; finish to retry reduced load." :

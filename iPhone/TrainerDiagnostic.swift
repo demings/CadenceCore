@@ -264,6 +264,28 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
         }
     }
 
+    @discardableResult func adjustWattBias(_ value: Int) -> Bool {
+        defer { onWorkoutUpdate?() }
+        do {
+            guard playback != nil, !recordingEnded else { throw RideLinkError.invalidMessage }
+            let command = try playback?.adjustWattBias(
+                value, commandPending: pending || stopFlow.isInProgress)
+            clearCadenceGuidance()
+            captureRide()
+            if let command {
+                perform(command)
+            } else {
+                let timing = playback?.state == .paused ? "Applies on resume." : "Scheduled target is unchanged after trainer rounding."
+                playbackStatus = "Watt bias \(value.formatted(.number.sign(strategy: .always()))) W. \(timing) FTP is unchanged."
+            }
+            return true
+        } catch {
+            playbackStatus = "Watt bias unchanged: \(error.localizedDescription)"
+            record(playbackStatus)
+            return false
+        }
+    }
+
     func interruptCoordinatedWorkout(_ reason: String) {
         guard workoutOwnsTrainer, playback?.state != .interrupted else { return }
         interruptWorkout(reason)
@@ -408,7 +430,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                     target: playback.position?.targetWatts,
                     interval: playback.position.map { $0.index + 1 }, intensity: playback.intensity,
                     simulatedSpeed: simulated?.speed, simulatedDistance: simulated?.distance,
-                    heartRateSampleDate: hr?.date)
+                    heartRateSampleDate: hr?.date, wattBias: playback.wattBias)
                 try archive.append(sample: sample)
                 if let hr { archivedHeartRateDate = hr.date }
             }
@@ -417,11 +439,13 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
                 ? .running
                 : playback.state == .completed
                     ? .finished : playback.state == .interrupted ? .interrupted : .paused
-            if archive.events.last?.state != state || archive.events.last?.intensity != playback.intensity {
+            if archive.events.last?.state != state || archive.events.last?.intensity != playback.intensity
+                || archive.events.last?.wattBias != playback.wattBias {
                 try archive.append(
                     event: RideArchiveEvent(
                         state: state, date: now, activeElapsed: playback.elapsed,
-                        intensity: playback.intensity, simulatedDistance: simulation?.metrics.distance))
+                        intensity: playback.intensity, simulatedDistance: simulation?.metrics.distance,
+                        wattBias: playback.wattBias))
                 stateChanged = true
             }
             if let recordingMetrics { try archive.setRecordingMetrics(recordingMetrics) }
@@ -502,7 +526,7 @@ final class TrainerDiagnostic: NSObject, @preconcurrency CBCentralManagerDelegat
             let elapsed = archive.activeDuration
             playback = try WorkoutPlayback(
                 recovering: archive.workout, ftp: archive.ftp, range: range,
-                elapsed: elapsed, intensity: archive.currentIntensity)
+                elapsed: elapsed, intensity: archive.currentIntensity, wattBias: archive.currentWattBias)
             simulation = try archive.simulation.map {
                 try RideSimulation(configuration: $0, recoveredDistance: archive.simulatedDistance ?? 0)
             }

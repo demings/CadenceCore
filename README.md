@@ -187,6 +187,14 @@ Settings contains editable advisory ranges: at most 75% FTP, 75–90 rpm; over 7
 
 Gentle Watch haptics are opt-in, require sustained deviation and are limited to one per 30 seconds. The iPhone ride dashboard and secondary Watch controls allow 50–150% session intensity. Every adjusted target is validated against trainer limits; FTP and the workout snapshot stay unchanged.
 
+### Target watt bias during a ride
+
+On iPhone, open **Ride → Target watt bias** below the live metrics. On Watch, swipe to controls and tap **Watt bias**. Adjust in **5 W steps**, then **Apply watt bias**; **Reset to 0 W** prepares a zero offset which you apply in the same way. Cancel leaves the current bias unchanged.
+
+Bias is a fixed watt offset, separate from percentage intensity: `target = workout target × intensity + watt bias`, rounded to the trainer's supported increment. For example, 200 W at 110% intensity with a +10 W bias becomes 230 W. It changes all interval/ramp targets, not FTP, workout duration, cadence targets or measured power. Every interval endpoint must remain within the trainer range; an invalid adjustment is rejected with a visible reason rather than silently clipped. A negative bias is rejected if it would make any target negative.
+
+Adjustments are available while running or paused, with no trainer command/stop sequence pending. Running adjustments send an acknowledged target command; paused changes send no resistance command until explicit resume. Pause/Finish still request **0 W then stop**, unaffected by bias. New rides start at 0 W bias; history and interrupted-ride checkpoints retain changes, and Watch retries preserve the command identity and requested offset. Rebuild **both apps** before using this new Watch command.
+
 ## History, recovery and Strava
 
 Rides save to app-private, protected, atomic per-ride JSON files with a small manifest. Telemetry is sampled at up to 1 Hz and checkpoints flush every five seconds and on state changes; completed rides are not rewritten while another ride records. Limits are 100 rides, 21,600 samples per ride, 2,048 events and 128 MiB of referenced history. Limits and corruption produce visible errors, not silent trimming. Initial persistence failure blocks trainer start; a mid-ride failure offers **Retry local save**.
@@ -206,14 +214,14 @@ Upload the TCX manually at `https://www.strava.com/upload/select`. Automatic syn
 ### Remaining real-device acceptance
 
 1. Install both updated targets. Import a ZWO through Files/Open in CadenceCore, relaunch, and confirm library/search/favorites.
-2. Set FTP, rider mass/simulation consent and cadence preferences. Use **Five-Minute Ride Check** for a short Watch-started ride; pause/resume, adjust intensity, finish/save, then repeat a second ride.
+2. Set FTP, rider mass/simulation consent and cadence preferences. Use **Five-Minute Ride Check** for a short Watch-started ride; pause/resume, adjust intensity, apply +10 W/−10 W bias from both devices and reset it, finish/save, then repeat a second ride. Check that paused bias changes only alter the target on resume and the new ride starts with 0 W bias.
 3. Check one Health/Fitness workout per ride, supported heart rate/energy/power/cadence, active timing and simulated speed/distance. Use **Settings → Inspect Health recording** to compare actual accessible samples with a native Indoor Cycle reference; permissions/sync may hide data.
 4. Export a TCX from History with simulation on/off, save/share it, and manually upload once to Strava. Inspect parsed power, cadence, heart rate, active time and simulated distance; do not assume an upload has been verified yet.
 5. Test comfortable explicit ZWO cadence drills, guidance-disabled and haptics-on modes; verify suggestions do not alter power.
 6. Test app switching, locked iPhone, wrist lowering and a longer ride. Then test Bluetooth loss and app relaunch safely: stop pedaling first, recover explicitly, and confirm no termination-gap distance or duplicate Health save.
 7. Verify light/dark mode, larger text and VoiceOver on your devices. The Watch separates glanceable metrics from wrist controls on vertically paged screens.
 
-Software validation: **94 shared tests pass**, including Garmin TCX v2/ActivityExtension v2 schema validation and numerical normal-text contrast checks. Signed paired-device and paired-simulator builds pass. Native UI tests cover FTP/cadence keyboard dismissal, export consent/share invalidation, explicit recovery cancellation, and the real system Health-denial/empty-state flow in standard light mode and the largest accessibility text size in dark mode. The final wrapped Health empty state also passes both layouts.
+Software validation: **99 shared tests pass**, including watt bias across ramps/pause/recovery, Garmin TCX v2/ActivityExtension v2 schema validation and numerical normal-text contrast checks. Signed paired-device and paired-simulator builds pass. Native UI tests cover FTP/cadence keyboard dismissal, export consent/share invalidation, explicit recovery cancellation, and the real system Health-denial/empty-state flow in standard light mode and the largest accessibility text size in dark mode. The final wrapped Health empty state also passes both layouts.
 
 Actual native-app TCX files were schema-validated with simulation included (300 measured-power/speed/distance points) and excluded (300 measured-power points, no simulated speed or trackpoint distance, disclosed mandatory Lap distance zero). Watch startup was visually checked with correct Health entitlements; successful empty-session recovery now shows preparation guidance rather than stale checking text. Watch uses the bright dark-surface accent for both asset variants; iPhone adapts its accent to light/dark appearance.
 

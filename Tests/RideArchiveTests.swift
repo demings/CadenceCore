@@ -91,6 +91,38 @@ private func archiveTestDirectory() throws -> URL {
     #expect(restored.activeDuration == 2)
 }
 
+@Test func archiveWattBiasPersistsPausedChangesAndLegacyFilesDefaultToZero() throws {
+    let directory = try archiveTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let repository = RideArchiveRepository(directory: directory)
+    try repository.load()
+    var ride = try archiveFixture()
+    try ride.append(sample: .init(date: archiveStart.addingTimeInterval(1), activeElapsed: 1,
+        power: 100, target: 110, wattBias: 10))
+    try ride.append(event: .init(state: .paused, date: archiveStart.addingTimeInterval(2),
+        activeElapsed: 2, wattBias: 10))
+    try ride.append(event: .init(state: .paused, date: archiveStart.addingTimeInterval(3),
+        activeElapsed: 2, wattBias: -5))
+    try repository.save(ride)
+    let restart = RideArchiveRepository(directory: directory)
+    try restart.load()
+    #expect(restart.rides[0].currentWattBias == -5)
+    #expect(restart.rides[0].samples[0].wattBias == 10)
+    #expect(restart.rides[0].activeDuration == 2)
+    try ride.concludeRecording(receipt: .init(status: .failed), at: archiveStart.addingTimeInterval(4))
+    #expect(ride.currentWattBias == -5)
+    var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(ride)) as? [String: Any])
+    for key in ["events", "samples"] {
+        var entries = try #require(legacy[key] as? [[String: Any]])
+        for index in entries.indices { entries[index].removeValue(forKey: "wattBias") }
+        legacy[key] = entries
+    }
+    let restored = try JSONDecoder().decode(RideArchive.self,
+        from: JSONSerialization.data(withJSONObject: legacy))
+    try restored.validate()
+    #expect(restored.currentWattBias == 0)
+}
+
 @Test func archiveRetainsOriginalFreshHeartRateTimestampAndRejectsStaleAlignment() throws {
     var ride = try archiveFixture()
     try ride.append(

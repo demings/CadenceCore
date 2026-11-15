@@ -206,7 +206,7 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
             lastContact = Date()
             switch message.action {
             case .heartbeat: publish(force: true)
-            case .pause, .resume, .finish, .intensity:
+            case .pause, .resume, .finish, .intensity, .wattBias:
                 guard gate?.accept(message) == true else {
                     publish(force: true)
                     return
@@ -218,6 +218,8 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
                 case .finish: trainer.finishWorkout()
                 case .intensity:
                     if let intensity = message.requestedIntensity { trainer.adjustIntensity(intensity) }
+                case .wattBias:
+                    if let bias = message.requestedWattBias { trainer.adjustWattBias(bias) }
                 default: break
                 }
                 publish(force: true)
@@ -263,7 +265,7 @@ final class WatchMirror: NSObject, HKWorkoutSessionDelegate, WCSessionDelegate {
                 separator: " "),
             simulation: trainer.simulation?.metrics, intensity: playback.intensity,
             guidance: pendingCadenceHaptic?.guidance ?? trainer.cadenceGuidance, cue: trainer.activeCue,
-            acknowledgedCommandID: acknowledgedCommandID
+            acknowledgedCommandID: acknowledgedCommandID, wattBias: playback.wattBias
         )
         sending = true
         lastSent = Date()

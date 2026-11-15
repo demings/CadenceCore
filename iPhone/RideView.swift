@@ -8,6 +8,8 @@ struct RideView: View {
     @State private var confirmFinish = false
     @State private var confirmRelease = false
     @State private var intensity = 100.0
+    @State private var showingWattBias = false
+    @State private var wattBias = 0
 
     var body: some View {
         ScrollView {
@@ -32,6 +34,25 @@ struct RideView: View {
                         }
                     }.rideCard()
                     liveMetrics(playback)
+                    if [.running, .paused].contains(playback.state), !trainer.recordingEnded {
+                        Button {
+                            wattBias = playback.wattBias
+                            showingWattBias = true
+                        } label: {
+                            let layout = dynamicTypeSize.isAccessibilitySize
+                                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                                : AnyLayout(HStackLayout())
+                            layout {
+                                Label("Target watt bias", systemImage: "plusminus")
+                                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                                Text("\(playback.wattBias.formatted(.number.sign(strategy: .always()))) W")
+                                    .monospacedDigit()
+                                Image(systemName: "chevron.right")
+                            }.frame(minHeight: 44)
+                        }
+                        .buttonStyle(.bordered).controlSize(.large)
+                        .disabled(trainer.pending || trainer.stopFlow.isInProgress)
+                    }
                     if let guidance = trainer.cadenceGuidance, let target = guidance.target {
                         VStack(alignment: .leading, spacing: 8) {
                             Label(guidanceLabel(guidance.status), systemImage: "arrow.triangle.2.circlepath")
@@ -111,6 +132,42 @@ struct RideView: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { controls }
         .onAppear { intensity = (trainer.playback?.intensity ?? 1) * 100 }
+        .sheet(isPresented: $showingWattBias) {
+            NavigationStack {
+                Form {
+                    Section {
+                        Text("\(wattBias.formatted(.number.sign(strategy: .always()))) W")
+                            .font(.largeTitle.monospacedDigit())
+                        Stepper("Adjust in 5 W steps", value: $wattBias, in: -32765...32765, step: 5)
+                            .accessibilityValue("\(wattBias) watts")
+                        Button("Reset to 0 W") { wattBias = 0 }
+                        if let playback = trainer.playback {
+                            Text("Current bias: \(playback.wattBias.formatted(.number.sign(strategy: .always()))) W")
+                            if let target = playback.position?.targetWatts {
+                                Text("Current scheduled target: \(target) W")
+                            }
+                        }
+                    }
+                    Section {
+                        Text("Adds a fixed watt offset after percentage intensity to all workout targets. FTP and the saved workout stay unchanged.")
+                        Text("Every target must fit the trainer range. While paused, changes apply on resume. Pause and Finish still request 0 W, regardless of bias.")
+                    }.font(.footnote)
+                    Section {
+                        Button("Apply watt bias") {
+                            if trainer.adjustWattBias(wattBias) { showingWattBias = false }
+                        }.disabled(!canAdjustWattBias)
+                        Text(trainer.playbackStatus).font(.caption)
+                    }
+                }
+                .navigationTitle("Target watt bias")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingWattBias = false }
+                    }
+                }
+            }
+        }
         .confirmationDialog(
             "Finish and request reduced load?", isPresented: $confirmFinish, titleVisibility: .visible
         ) {
@@ -130,6 +187,11 @@ struct RideView: View {
                 "This does not confirm a Health save or end a Watch recording. End any active Watch session before starting another."
             )
         }
+    }
+
+    private var canAdjustWattBias: Bool {
+        !trainer.pending && !trainer.stopFlow.isInProgress && !trainer.recordingEnded
+            && [.running, .paused].contains(trainer.playback?.state ?? .ready)
     }
 
     private var controls: some View {
@@ -209,7 +271,7 @@ struct RideView: View {
                         let x = endpoint == 0 ? start : start + interval.duration
                         let y =
                             (endpoint == 0 ? interval.startPower : interval.endPower) * playback.ftp
-                            * playback.intensity
+                            * playback.intensity + Double(playback.wattBias)
                         AreaMark(
                             x: .value("Active minutes", x / 60), y: .value("Target watts", y),
                             series: .value("Interval", index)

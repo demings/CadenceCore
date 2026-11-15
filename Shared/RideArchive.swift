@@ -33,16 +33,18 @@ public struct RideArchiveEvent: Codable, Equatable, Sendable {
     public let date: Date
     public let activeElapsed: Double
     public let intensity: Double?
+    public let wattBias: Int?
     public let simulatedDistance: Double?
     public init(
         id: UUID = UUID(), state: State, date: Date, activeElapsed: Double,
-        intensity: Double? = nil, simulatedDistance: Double? = nil
+        intensity: Double? = nil, simulatedDistance: Double? = nil, wattBias: Int? = nil
     ) {
         self.id = id
         self.state = state
         self.date = date
         self.activeElapsed = activeElapsed
         self.intensity = intensity
+        self.wattBias = wattBias
         self.simulatedDistance = simulatedDistance
     }
 }
@@ -58,6 +60,7 @@ public struct RideArchiveSample: Codable, Equatable, Sendable {
     public let target: Int?
     public let interval: Int?
     public let intensity: Double
+    public let wattBias: Int?
     public let simulatedSpeed: Double?
     public let simulatedDistance: Double?
     public init(
@@ -65,7 +68,7 @@ public struct RideArchiveSample: Codable, Equatable, Sendable {
         cadence: Double? = nil, heartRate: Double? = nil, target: Int? = nil,
         interval: Int? = nil, intensity: Double = 1, simulatedSpeed: Double? = nil,
         simulatedDistance: Double? = nil,
-        heartRateSampleDate: Date? = nil
+        heartRateSampleDate: Date? = nil, wattBias: Int? = nil
     ) {
         self.id = id
         self.date = date
@@ -77,6 +80,7 @@ public struct RideArchiveSample: Codable, Equatable, Sendable {
         self.interval = interval
         self.heartRateSampleDate = heartRateSampleDate
         self.intensity = intensity
+        self.wattBias = wattBias
         self.simulatedSpeed = simulatedSpeed
         self.simulatedDistance = simulatedDistance
     }
@@ -134,6 +138,13 @@ public struct RideArchive: Codable, Sendable, Identifiable {
         }
         return sample?.intensity ?? initialIntensity ?? 1
     }
+    public var currentWattBias: Int {
+        if let event = events.last, let bias = event.wattBias,
+            samples.last.map({ event.date >= $0.date }) ?? true {
+            return bias
+        }
+        return samples.last?.wattBias ?? 0
+    }
 
     public init(
         id: UUID = UUID(), workout: Workout, ftp: Double, simulation: SimulationConfiguration? = nil,
@@ -170,6 +181,7 @@ public struct RideArchive: Codable, Sendable, Identifiable {
                 existing.heartRateSampleDate == sample.heartRateSampleDate,
                 existing.target == sample.target, existing.interval == sample.interval,
                 existing.intensity == sample.intensity,
+                existing.wattBias == sample.wattBias,
                 existing.simulatedSpeed == sample.simulatedSpeed,
                 existing.simulatedDistance == sample.simulatedDistance
             else { throw RideArchiveError.duplicateIdentity }
@@ -201,7 +213,8 @@ public struct RideArchive: Codable, Sendable, Identifiable {
 
     public mutating func finish(at date: Date, activeElapsed: Double) throws {
         if endedAt == date, activeDuration == activeElapsed { return }
-        try append(event: .init(state: .finished, date: date, activeElapsed: activeElapsed))
+        try append(event: .init(state: .finished, date: date, activeElapsed: activeElapsed,
+            wattBias: currentWattBias))
     }
 
     public mutating func setHealthReceipt(_ receipt: RideHealthReceipt) throws {
@@ -244,7 +257,8 @@ public struct RideArchive: Codable, Sendable, Identifiable {
             try candidate.append(
                 event: .init(
                     state: .finished, date: end, activeElapsed: candidate.activeDuration,
-                    intensity: candidate.currentIntensity, simulatedDistance: distance))
+                    intensity: candidate.currentIntensity, simulatedDistance: distance,
+                    wattBias: candidate.currentWattBias))
         }
         self = candidate
     }
@@ -277,6 +291,7 @@ public struct RideArchive: Codable, Sendable, Identifiable {
                 valid(event.date.timeIntervalSince1970, 0...253_402_300_799),
                 event.date >= startedAt, valid(event.activeElapsed, 0...workout.duration),
                 valid(event.intensity, 0.5...1.5), valid(event.simulatedDistance, 0...4_320_000),
+                event.wattBias.map({ (-32767...32767).contains($0) }) ?? true,
                 simulation != nil || event.simulatedDistance == nil,
                 event.activeElapsed <= event.date.timeIntervalSince(startedAt) + 1,
                 previousEvent.map({
@@ -318,6 +333,7 @@ public struct RideArchive: Codable, Sendable, Identifiable {
                 }) ?? true,
                 sample.target.map({ (0...32767).contains($0) }) ?? true,
                 valid(sample.intensity, 0.5...1.5),
+                sample.wattBias.map({ (-32767...32767).contains($0) }) ?? true,
                 sample.interval.map({ (1...workout.intervals.count).contains($0) }) ?? true,
                 valid(sample.simulatedSpeed, 0...200), valid(sample.simulatedDistance, 0...4_320_000),
                 simulation != nil || (sample.simulatedSpeed == nil && sample.simulatedDistance == nil),

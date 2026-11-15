@@ -20,6 +20,39 @@ private func snapshot(sequence: Int = 1, state: String = "running", date: Date?)
         from: JSONSerialization.data(withJSONObject: legacy)).acknowledgedCommandID == nil)
 }
 
+@Test func wattBiasCommandsAndSnapshotsValidateAndPreserveRetryIdentity() throws {
+    let now = Date()
+    let id = UUID()
+    let message = RideMessage(rideID: id, action: .wattBias, date: now, requestedWattBias: -10)
+    let decoded = try RideMessage.decode(JSONEncoder().encode(message), now: now)
+    #expect(decoded.requestedWattBias == -10)
+    var gate = RideCommandGate(rideID: id)
+    let accepted = gate.accept(decoded)
+    #expect(accepted)
+    let retry = RideMessage(rideID: id, action: .wattBias, date: now,
+        commandID: decoded.commandID, requestedWattBias: decoded.requestedWattBias)
+    let duplicate = gate.accept(try RideMessage.decode(JSONEncoder().encode(retry), now: now))
+    #expect(!duplicate)
+    for invalid in [
+        RideMessage(rideID: id, action: .wattBias, date: now),
+        RideMessage(rideID: id, action: .wattBias, date: now, requestedWattBias: Int.max),
+        RideMessage(rideID: id, action: .pause, date: now, requestedWattBias: 10)
+    ] {
+        #expect(throws: RideLinkError.self) { try RideMessage.decode(JSONEncoder().encode(invalid), now: now) }
+    }
+    let update = RideSnapshot(sequence: 1, state: "running", elapsed: 1, interval: 1,
+        remaining: 59, target: 110, power: 100, cadence: 80, telemetryDate: now, status: "Running",
+        acknowledgedCommandID: message.commandID, wattBias: 10)
+    let data = try JSONEncoder().encode(update)
+    #expect(try JSONDecoder().decode(RideSnapshot.self, from: data).wattBias == 10)
+    var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    legacy.removeValue(forKey: "wattBias")
+    let restored = try JSONDecoder().decode(RideSnapshot.self,
+        from: JSONSerialization.data(withJSONObject: legacy))
+    #expect(restored.isValid)
+    #expect(restored.wattBias == nil)
+}
+
 @Test func rideMessagesRoundTripAndRejectStaleControls() throws {
     let now = Date()
     let id = UUID()
